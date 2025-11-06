@@ -1,0 +1,195 @@
+import { useState, useEffect } from 'react';
+import { useAppDispatch, useAppSelector } from '../redux/hooks';
+import { setCurrentFeature, setCurrentPage } from '../redux/slices/featureKeysSlice';
+import { toggleTheme } from '../redux/slices/themeSlice';
+import { menuConfig, MenuItem } from '../config/menuConfig';
+import { FaMoon, FaSun } from 'react-icons/fa';
+
+interface AppSideBarProps {
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+}
+
+const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
+  const dispatch = useAppDispatch();
+  const { currentFeature, currentPage } = useAppSelector((state) => state.featureKeys);
+  const { theme } = useAppSelector((state) => state.theme);
+  
+  // 跟踪展开的父节点（使用 Set 来避免重复）
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
+
+  // 当激活的页面改变时，自动展开包含该页面的父节点
+  useEffect(() => {
+    setExpandedParents((prev) => {
+      const newExpanded = new Set<string>(prev);
+      
+      menuConfig.forEach((item) => {
+        if (item.children && item.children.length > 0) {
+          // 检查是否有子节点被激活
+          const hasActiveChild = item.children.some(child => {
+            if (child.page) {
+              return currentFeature === child.feature && currentPage === child.page;
+            }
+            return currentFeature === child.feature && !currentPage;
+          });
+          
+          if (hasActiveChild) {
+            // 如果有激活的子节点，确保父节点展开
+            newExpanded.add(item.key);
+          }
+        }
+      });
+      
+      return newExpanded;
+    });
+  }, [currentFeature, currentPage]);
+
+  const handleMenuClick = (item: MenuItem, parentKey?: string) => {
+    // 只有叶节点（没有子菜单的节点）才响应打开页面
+    if (item.children && item.children.length > 0) {
+      // 父节点不响应，只让 details 元素处理展开/收起
+      return;
+    }
+    
+    // 叶节点：如果有 page，设置 feature 和 page
+    if (item.page) {
+      dispatch(setCurrentPage({ feature: item.feature, page: item.page }));
+    } else {
+      // 如果没有 page，只设置 feature
+      dispatch(setCurrentFeature(item.feature));
+    }
+  };
+
+  const handleParentToggle = (itemKey: string, isOpen: boolean) => {
+    setExpandedParents((prev) => {
+      const newSet = new Set(prev);
+      if (isOpen) {
+        newSet.add(itemKey);
+      } else {
+        newSet.delete(itemKey);
+      }
+      return newSet;
+    });
+  };
+
+  const isActive = (item: MenuItem): boolean => {
+    if (item.page) {
+      return currentFeature === item.feature && currentPage === item.page;
+    }
+    return currentFeature === item.feature && !currentPage;
+  };
+
+  const renderMenuItem = (item: MenuItem, parentKey?: string) => {
+    const hasChildren = item.children && item.children.length > 0;
+    const active = isActive(item);
+
+    const IconComponent = item.icon;
+
+    if (hasChildren) {
+      // 判断是否应该展开：如果当前激活的子节点在这个父节点下，或者用户手动展开了
+      const shouldBeOpen = expandedParents.has(item.key);
+      
+      return (
+        <li key={item.key}>
+          <details 
+            open={shouldBeOpen}
+            onToggle={(e) => {
+              // 阻止事件冒泡，避免影响其他 details
+              e.stopPropagation();
+              const target = e.currentTarget as HTMLDetailsElement;
+              handleParentToggle(item.key, target.open);
+            }}
+          >
+            <summary
+              onClick={(e) => {
+                // 阻止事件冒泡
+                e.stopPropagation();
+              }}
+            >
+              {IconComponent && <IconComponent className="h-3.5 w-3.5" />}
+              {item.label}
+            </summary>
+            <ul>
+              {item.children!.map((child) => {
+                const ChildIconComponent = child.icon;
+                return (
+                  <li key={child.key}>
+                    <a
+                      className={isActive(child) ? 'active' : ''}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMenuClick(child, item.key);
+                      }}
+                    >
+                      {ChildIconComponent && <ChildIconComponent className="h-3.5 w-3.5" />}
+                      {child.label}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        </li>
+      );
+    }
+
+    return (
+      <li key={item.key}>
+        <a
+          className={active ? 'active' : ''}
+          onClick={() => handleMenuClick(item)}
+        >
+          {IconComponent && <IconComponent className="h-3.5 w-3.5" />}
+          {item.label}
+        </a>
+      </li>
+    );
+  };
+
+  return (
+    <div className="drawer-side">
+      <label
+        htmlFor="sidebar-toggle"
+        className="drawer-overlay"
+        onClick={onToggleSidebar}
+      ></label>
+      <aside className="w-64 h-full bg-base-200 relative overflow-y-auto">
+        {/* Logo 区域 */}
+        <div className="flex items-center justify-center h-20 border-b border-base-300">
+          <div className="w-32 h-12 bg-base-300 rounded flex items-center justify-center">
+            {/* Logo 占位区域 */}
+          </div>
+        </div>
+
+        {/* Menu 区域 */}
+        <ul className="menu p-4 w-full">
+          {menuConfig.map((item) => renderMenuItem(item))}
+        </ul>
+
+        {/* Theme Toggle Button */}
+        <div className="absolute bottom-4 left-4 right-4">
+          <button
+            className="btn btn-block btn-ghost"
+            onClick={() => dispatch(toggleTheme())}
+            aria-label="切换主题"
+          >
+            {theme === 'dark' ? (
+              <>
+                <FaSun className="h-3.5 w-3.5" />
+                <span>浅色模式</span>
+              </>
+            ) : (
+              <>
+                <FaMoon className="h-3.5 w-3.5" />
+                <span>深色模式</span>
+              </>
+            )}
+          </button>
+        </div>
+      </aside>
+    </div>
+  );
+};
+
+export default AppSideBar;
+
