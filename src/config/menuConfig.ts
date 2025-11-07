@@ -15,7 +15,7 @@ export interface FeaturePageMap {
   };
 }
 
-import { FaHome, FaChartBar, FaCog, FaEye, FaTable, FaSlidersH, FaCogs } from 'react-icons/fa';
+import { FaHome, FaCog, FaSlidersH, FaCogs } from 'react-icons/fa';
 
 // Menu 配置
 export const menuConfig: MenuItem[] = [
@@ -24,28 +24,6 @@ export const menuConfig: MenuItem[] = [
     label: '首页',
     icon: FaHome,
     feature: 'home',
-  },
-  {
-    key: 'statistics',
-    label: '数据统计',
-    icon: FaChartBar,
-    feature: 'statistics',
-    children: [
-      {
-        key: 'statistics-overview',
-        label: '概览',
-        icon: FaEye,
-        feature: 'statistics',
-        page: 'overview',
-      },
-      {
-        key: 'statistics-detail',
-        label: '详细数据',
-        icon: FaTable,
-        feature: 'statistics',
-        page: 'detail',
-      },
-    ],
   },
   {
     key: 'settings',

@@ -14,10 +14,6 @@ const ResourceInfoCard = ({
   return (
     <div className="card bg-base-100">
       <div className="card-body">
-        <div className="mb-4">
-          <h2 className="card-title text-lg">资源信息</h2>
-        </div>
-
         {/* 音频预览 */}
         <div className="mb-4 pb-4 border-b border-base-300">
           {audioSrc ? (

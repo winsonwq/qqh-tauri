@@ -94,7 +94,7 @@ const SettingsGeneralPage = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   {model.downloaded ? (
-                    <div className="badge badge-soft badge-success">已安装</div>
+                    <div className="badge badge-success">已安装</div>
                   ) : (
                     <button
                       className={`btn btn-sm btn-primary ${downloadingModel === model.name ? 'loading' : ''}`}
