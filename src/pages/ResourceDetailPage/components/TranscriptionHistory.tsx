@@ -106,7 +106,7 @@ const TranscriptionHistory = ({
                 resultContent ? (
                   jsonData ? (
                     // 显示 JSON 格式的结果
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       <TranscriptionJsonView data={jsonData} />
                     </div>
                   ) : (
