@@ -7,6 +7,7 @@ import { HiArrowLeft } from 'react-icons/hi2';
 import { useAppDispatch, useAppSelector } from '../../redux/hooks';
 import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { appendLog } from '../../redux/slices/transcriptionLogsSlice';
+import { useMessage } from '../../componets/Toast';
 import {
   TranscriptionResource,
   TranscriptionTask,
@@ -26,9 +27,9 @@ function generateEventId(): string {
 const ResourceDetailPage = () => {
   const dispatch = useAppDispatch();
   const { currentPage } = useAppSelector((state) => state.featureKeys);
+  const message = useMessage();
   const [resource, setResource] = useState<TranscriptionResource | null>(null);
   const [tasks, setTasks] = useState<TranscriptionTask[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [resultContent, setResultContent] = useState<string | null>(null);
@@ -96,7 +97,6 @@ const ResourceDetailPage = () => {
   const loadResource = async () => {
     if (!resourceId) return;
     try {
-      setError(null);
       const resources = await invoke<TranscriptionResource[]>('get_transcription_resources');
       const found = resources.find((r) => r.id === resourceId);
 
@@ -107,13 +107,13 @@ const ResourceDetailPage = () => {
         try {
           const fileExists = await exists(found.file_path);
           if (!fileExists) {
-            setError(`音频文件不存在: ${found.file_path}`);
+            message.error(`音频文件不存在: ${found.file_path}`);
             setAudioSrc(null);
             return;
           }
         } catch (err) {
           console.error('检查文件失败:', err);
-          setError(`无法访问音频文件: ${found.file_path}`);
+          message.error(`无法访问音频文件: ${found.file_path}`);
           setAudioSrc(null);
           return;
         }
@@ -126,13 +126,13 @@ const ResourceDetailPage = () => {
           setAudioSrc(audioPath);
         } catch (err) {
           console.error('转换音频路径失败:', err);
-          setError('无法创建音频播放器');
+          message.error('无法创建音频播放器');
           setAudioSrc(null);
         }
       }
     } catch (err) {
       console.error('加载资源失败:', err);
-      setError(err instanceof Error ? err.message : '加载资源失败');
+      message.error(err instanceof Error ? err.message : '加载资源失败');
       setAudioSrc(null);
     }
   };
@@ -213,7 +213,6 @@ const ResourceDetailPage = () => {
   const handleCreateTask = async (params: TranscriptionParams) => {
     if (!resourceId) return;
     try {
-      setError(null);
       setShowCreateTaskModal(false);
 
       // 创建任务
@@ -264,6 +263,11 @@ const ResourceDetailPage = () => {
       unlistenRef.current.stderr = unlistenStderr;
 
       // 异步执行转写任务（不阻塞 UI）
+      // 先立即刷新一次任务列表，以获取更新后的 running 状态
+      setTimeout(() => {
+        loadTasks(true);
+      }, 500); // 延迟 500ms 以确保 Rust 端已更新状态
+      
       invoke<string>('execute_transcription_task', {
         taskId: task.id,
         resourceId: resourceId,
@@ -275,7 +279,7 @@ const ResourceDetailPage = () => {
         loadTasks(true);
       }).catch((err) => {
         console.error('执行转写任务失败:', err);
-        setError(err instanceof Error ? err.message : '执行转写任务失败');
+        message.error(err instanceof Error ? err.message : '执行转写任务失败');
         // 清理事件监听器
         cleanupEventListeners();
         // 即使失败也要重新加载任务列表以更新状态
@@ -283,7 +287,7 @@ const ResourceDetailPage = () => {
       });
     } catch (err) {
       console.error('创建转写任务失败:', err);
-      setError(err instanceof Error ? err.message : '创建转写任务失败');
+      message.error(err instanceof Error ? err.message : '创建转写任务失败');
       // 清理事件监听器
       cleanupEventListeners();
     }
@@ -322,19 +326,13 @@ const ResourceDetailPage = () => {
         </div>
       </div>
 
-      {error && (
-        <div className="alert alert-error flex-shrink-0">
-          <span>{error}</span>
-        </div>
-      )}
-
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
         {/* 左侧：资源信息和预览 */}
         <div className="w-full lg:w-1/3 flex-shrink-0 lg:h-full overflow-auto p-6">
           <ResourceInfoCard
             resource={resource}
             audioSrc={audioSrc}
-            onAudioError={(error: string) => setError(error)}
+            onAudioError={(error: string) => message.error(error)}
           />
         </div>
 
@@ -347,6 +345,7 @@ const ResourceDetailPage = () => {
             onSelectTask={setSelectedTaskId}
             onCreateTask={handleShowCreateTaskModal}
             onTaskDeleted={loadTasks}
+            onTaskStopped={loadTasks}
           />
         </div>
       </div>

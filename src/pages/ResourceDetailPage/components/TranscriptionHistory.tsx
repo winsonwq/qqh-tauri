@@ -4,7 +4,7 @@ import { useAppSelector, useAppDispatch } from '../../../redux/hooks';
 import { clearLogs } from '../../../redux/slices/transcriptionLogsSlice';
 import { TranscriptionTask, TranscriptionTaskStatus } from '../../../models';
 import { TranscriptionResultJson } from '../../../models/TranscriptionResult';
-import { HiDocumentText, HiInformationCircle, HiTrash } from 'react-icons/hi2';
+import { HiDocumentText, HiInformationCircle, HiTrash, HiStop } from 'react-icons/hi2';
 import { getStatusText } from './transcriptionUtils';
 import TranscriptionJsonView from './TranscriptionJsonView';
 import TranscriptionInfoModal from './TranscriptionInfoModal';
@@ -17,6 +17,7 @@ interface TranscriptionHistoryProps {
   onSelectTask: (taskId: string | null) => void;
   onCreateTask: () => void;
   onTaskDeleted?: () => void; // 任务删除后的回调
+  onTaskStopped?: () => void; // 任务停止后的回调
 }
 
 const TranscriptionHistory = ({
@@ -26,6 +27,7 @@ const TranscriptionHistory = ({
   onSelectTask,
   onCreateTask,
   onTaskDeleted,
+  onTaskStopped,
 }: TranscriptionHistoryProps) => {
   const sortedTasks = useMemo(() => {
     return [...tasks].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -56,6 +58,20 @@ const TranscriptionHistory = ({
   }, [selectedTaskId, logs, realtimeLog]);
 
   const selectedTask = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) : null;
+  
+  // 调试：打印任务状态
+  useEffect(() => {
+    if (selectedTask) {
+      console.log('当前选中任务:', {
+        id: selectedTask.id,
+        status: selectedTask.status,
+        statusType: typeof selectedTask.status,
+        RUNNING: TranscriptionTaskStatus.RUNNING,
+        isRunning: selectedTask.status === TranscriptionTaskStatus.RUNNING,
+        statusEquals: selectedTask.status === 'running',
+      });
+    }
+  }, [selectedTask]);
 
   // 删除任务
   const handleDeleteTask = async () => {
@@ -75,6 +91,22 @@ const TranscriptionHistory = ({
     } catch (err) {
       console.error('删除任务失败:', err);
       alert(err instanceof Error ? err.message : '删除任务失败');
+    }
+  };
+
+  // 停止任务
+  const handleStopTask = async () => {
+    if (!selectedTaskId) return;
+    
+    try {
+      await invoke('stop_transcription_task', { taskId: selectedTaskId });
+      // 通知父组件刷新任务列表
+      if (onTaskStopped) {
+        onTaskStopped();
+      }
+    } catch (err) {
+      // 静默处理错误，只记录到控制台，不显示全局提示
+      console.error('停止任务失败:', err);
     }
   };
 
@@ -168,6 +200,17 @@ const TranscriptionHistory = ({
                 <h3 className="text-lg font-semibold">
                   {viewMode === 'result' ? '转写结果' : '运行日志'}
                 </h3>
+                {/* 如果任务正在运行，在标题旁边显示停止按钮 */}
+                {selectedTask && selectedTask.status === TranscriptionTaskStatus.RUNNING && (
+                  <button
+                    className="btn btn-warning btn-sm"
+                    onClick={handleStopTask}
+                    title="停止任务"
+                  >
+                    <HiStop className="w-4 h-4 mr-1" />
+                    停止
+                  </button>
+                )}
                 {viewMode === 'result' && jsonData && (
                   <button
                     className="btn btn-sm btn-ghost btn-circle"

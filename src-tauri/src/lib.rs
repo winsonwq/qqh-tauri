@@ -1,10 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::{Emitter, Manager};
+use std::sync::Arc;
+use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 use chrono::Utc;
 use tokio::io::AsyncRead;
 use tokio::task::JoinHandle;
+use tokio::process::Child;
+use tokio::sync::Mutex;
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 
 // 转写资源模型
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -49,6 +55,41 @@ pub struct TranscriptionParams {
     pub log_prob_threshold: Option<f32>,
     pub no_speech_threshold: Option<f32>,
     pub translate: Option<bool>,
+}
+
+// 运行中的任务进程管理器
+#[derive(Clone)]
+pub struct RunningTasks {
+    // 存储 task_id -> Arc<Mutex<Child>> 进程句柄，使用 Arc 和 Mutex 以便多个地方可以访问
+    tasks: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+}
+
+impl RunningTasks {
+    pub fn new() -> Self {
+        Self {
+            tasks: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn insert(&self, task_id: String, child: Child) {
+        let mut tasks = self.tasks.lock().await;
+        tasks.insert(task_id, Arc::new(Mutex::new(child)));
+    }
+
+    pub async fn remove(&self, task_id: &str) -> Option<Arc<Mutex<Child>>> {
+        let mut tasks = self.tasks.lock().await;
+        tasks.remove(task_id)
+    }
+
+    pub async fn get(&self, task_id: &str) -> Option<Arc<Mutex<Child>>> {
+        let tasks = self.tasks.lock().await;
+        tasks.get(task_id).cloned()
+    }
+
+    pub async fn contains(&self, task_id: &str) -> bool {
+        let tasks = self.tasks.lock().await;
+        tasks.contains_key(task_id)
+    }
 }
 
 // 获取应用数据目录
@@ -356,6 +397,10 @@ async fn execute_transcription_task(
     let stderr = child.stderr.take()
         .ok_or("无法获取 stderr 句柄")?;
     
+    // 将进程句柄存储到 RunningTasks 中，以便可以停止
+    let running_tasks: State<'_, RunningTasks> = app.state();
+    running_tasks.insert(task_id.clone(), child).await;
+    
     // 创建事件名称
     // 如果提供了 event_id，使用独立的事件名（transcription-stdout-{event_id} 和 transcription-stderr-{event_id}）
     // 否则使用旧的事件名（transcription-log-{task_id}）以保持向后兼容
@@ -387,8 +432,30 @@ async fn execute_transcription_task(
     );
     
     // 等待进程完成
-    let status = child.wait().await
-        .map_err(|e| format!("等待进程完成失败: {}", e))?;
+    // 注意：child 已经存储在 RunningTasks 中，stop_transcription_task 可以访问它
+    // 我们需要定期检查进程状态，如果 child 不在 RunningTasks 中，说明任务已被停止
+    let running_tasks_clone: State<'_, RunningTasks> = app.state();
+    
+    // 使用循环定期检查进程状态
+    let status = loop {
+        // 检查 child 是否还在 RunningTasks 中
+        if let Some(child_arc) = running_tasks_clone.get(&task_id).await {
+            // 尝试等待进程完成（非阻塞）
+            let mut child_guard = child_arc.lock().await;
+            if let Ok(Some(exit_status)) = child_guard.try_wait() {
+                // 进程已完成，从 RunningTasks 中移除
+                let _ = running_tasks_clone.remove(&task_id).await;
+                break exit_status;
+            }
+            // 释放锁，等待一段时间后重试
+            drop(child_guard);
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        } else {
+            // child 不在 RunningTasks 中，说明任务已被停止
+            // 返回一个表示被中断的退出码
+            break std::process::ExitStatus::from_raw(130); // SIGINT 退出码
+        }
+    };
     
     // 获取 stdout 和 stderr 的输出
     let stdout_output = stdout_handle.await
@@ -493,6 +560,70 @@ async fn execute_transcription_task(
         .map_err(|e| format!("无法更新资源文件: {}", e))?;
     
     Ok(output_file.to_string_lossy().to_string())
+}
+
+// 停止转写任务
+#[tauri::command]
+async fn stop_transcription_task(
+    task_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let running_tasks: State<'_, RunningTasks> = app.state();
+    
+    // 检查任务是否正在运行
+    if !running_tasks.contains(&task_id).await {
+        return Err(format!("任务 {} 不在运行中", task_id));
+    }
+    
+    // 从 HashMap 中获取进程句柄
+    if let Some(child_arc) = running_tasks.get(&task_id).await {
+        // 获取 child 的锁
+        let mut child = child_arc.lock().await;
+        
+        // 尝试优雅地终止进程（发送 SIGTERM）
+        if let Err(e) = child.kill().await {
+            eprintln!("终止进程失败: {}", e);
+            return Err(format!("无法终止进程: {}", e));
+        }
+        
+        // 释放锁，等待进程退出
+        drop(child);
+        
+        // 等待进程退出
+        let mut child = child_arc.lock().await;
+        let _ = child.wait().await;
+        
+        // 从 RunningTasks 中移除
+        let _ = running_tasks.remove(&task_id).await;
+        
+        eprintln!("已停止任务: {}", task_id);
+        
+        // 更新任务状态为 failed（因为是被用户停止的）
+        let app_data_dir = get_app_data_dir(&app)?;
+        let tasks_dir = app_data_dir.join("transcription_tasks");
+        let task_file = tasks_dir.join(format!("{}.json", task_id));
+        
+        if task_file.exists() {
+            let task_content = std::fs::read_to_string(&task_file)
+                .map_err(|e| format!("无法读取任务文件: {}", e))?;
+            
+            let mut task: TranscriptionTask = serde_json::from_str(&task_content)
+                .map_err(|e| format!("无法解析任务文件: {}", e))?;
+            
+            task.status = "failed".to_string();
+            task.error = Some("任务已被用户停止".to_string());
+            task.completed_at = Some(Utc::now().to_rfc3339());
+            
+            let task_json = serde_json::to_string_pretty(&task)
+                .map_err(|e| format!("无法序列化任务: {}", e))?;
+            std::fs::write(&task_file, task_json)
+                .map_err(|e| format!("无法更新任务文件: {}", e))?;
+        }
+        
+        Ok(())
+    } else {
+        Err(format!("无法获取任务 {} 的进程句柄", task_id))
+    }
 }
 
 // 获取所有转写资源
@@ -929,7 +1060,7 @@ async fn execute_command(
         app.clone(),
         stdout_event_name,
         "stdout",
-        true, // 启用调试日志
+        false, // 启用调试日志
     );
     
     let stderr_handle = spawn_stream_reader(
@@ -937,7 +1068,7 @@ async fn execute_command(
         app.clone(),
         stderr_event_name,
         "stderr",
-        true, // 启用调试日志
+        false, // 启用调试日志
     );
     
     // 等待进程完成
@@ -975,10 +1106,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(RunningTasks::new())
         .invoke_handler(tauri::generate_handler![
             create_transcription_resource,
             create_transcription_task,
             execute_transcription_task,
+            stop_transcription_task,
             get_transcription_resources,
             get_transcription_tasks,
             get_transcription_task,
