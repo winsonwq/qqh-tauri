@@ -18,6 +18,7 @@ import ResourceInfoCard from './components/ResourceInfoCard';
 import TranscriptionHistory from './components/TranscriptionHistory';
 import LoadingCard from './components/LoadingCard';
 import CreateTranscriptionTaskModal from './components/CreateTranscriptionTaskModal';
+import DeleteConfirmModal from '../../componets/DeleteConfirmModal';
 
 const ResourceDetailPage = () => {
   const dispatch = useAppDispatch();
@@ -29,6 +30,7 @@ const ResourceDetailPage = () => {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [resultContent, setResultContent] = useState<string | null>(null);
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   
   // 用于存储事件监听器的清理函数
   const unlistenRef = useRef<{ stdout?: UnlistenFn; stderr?: UnlistenFn; taskId?: string }>({});
@@ -396,6 +398,21 @@ const ResourceDetailPage = () => {
     setShowCreateTaskModal(true);
   };
 
+  // 删除资源
+  const handleDeleteResource = async () => {
+    if (!resourceId) return;
+    try {
+      await invoke('delete_transcription_resource', { resourceId: resourceId });
+      message.success('资源已删除');
+      setShowDeleteModal(false);
+      // 返回列表页
+      dispatch(setCurrentPage({ feature: 'home', page: null }));
+    } catch (err) {
+      console.error('删除资源失败:', err);
+      message.error(err instanceof Error ? err.message : '删除资源失败');
+    }
+  };
+
   // 创建转写任务（从弹窗确认后调用）
   const handleCreateTask = async (params: TranscriptionParams) => {
     if (!resourceId) return;
@@ -502,6 +519,7 @@ const ResourceDetailPage = () => {
             resource={resource}
             audioSrc={audioSrc}
             onAudioError={(error: string) => message.error(error)}
+            onDelete={() => setShowDeleteModal(true)}
           />
         </div>
 
@@ -524,6 +542,15 @@ const ResourceDetailPage = () => {
         isOpen={showCreateTaskModal}
         onConfirm={handleCreateTask}
         onCancel={() => setShowCreateTaskModal(false)}
+      />
+
+      {/* 删除资源确认弹窗 */}
+      <DeleteConfirmModal
+        isOpen={showDeleteModal}
+        title="删除资源"
+        message="确定要删除这个资源吗？删除后无法恢复，相关的转写任务将保留。"
+        onConfirm={handleDeleteResource}
+        onCancel={() => setShowDeleteModal(false)}
       />
     </div>
   );

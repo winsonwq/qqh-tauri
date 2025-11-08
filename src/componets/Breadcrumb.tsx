@@ -4,7 +4,7 @@ import { setCurrentPage, setCurrentFeature } from '../redux/slices/featureKeysSl
 
 const Breadcrumb = () => {
   const dispatch = useAppDispatch();
-  const { breadcrumbs, currentFeature, currentPage } = useAppSelector((state) => state.featureKeys);
+  const { breadcrumbs } = useAppSelector((state) => state.featureKeys);
 
   const handleBreadcrumbClick = (feature: string, page?: string) => {
     if (page) {

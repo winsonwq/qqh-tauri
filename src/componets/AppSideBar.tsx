@@ -10,7 +10,7 @@ interface AppSideBarProps {
   onToggleSidebar: () => void;
 }
 
-const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
+const AppSideBar = ({ onToggleSidebar }: AppSideBarProps) => {
   const dispatch = useAppDispatch();
   const { currentFeature, currentPage } = useAppSelector((state) => state.featureKeys);
   const { theme } = useAppSelector((state) => state.theme);
@@ -44,7 +44,7 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
     });
   }, [currentFeature, currentPage]);
 
-  const handleMenuClick = (item: MenuItem, parentKey?: string) => {
+  const handleMenuClick = (item: MenuItem) => {
     // 只有叶节点（没有子菜单的节点）才响应打开页面
     if (item.children && item.children.length > 0) {
       // 父节点不响应，只让 details 元素处理展开/收起
@@ -91,7 +91,7 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
     return true;
   };
 
-  const renderMenuItem = (item: MenuItem, parentKey?: string) => {
+  const renderMenuItem = (item: MenuItem) => {
     const hasChildren = item.children && item.children.length > 0;
     const active = isActive(item);
 
@@ -132,7 +132,7 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
                       className={childLinkClassName || undefined}
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleMenuClick(child, item.key);
+                        handleMenuClick(child);
                       }}
                     >
                       {ChildIconComponent && <ChildIconComponent className="h-3.5 w-3.5" />}
@@ -169,7 +169,7 @@ const AppSideBar = ({ sidebarOpen, onToggleSidebar }: AppSideBarProps) => {
         className="drawer-overlay"
         onClick={onToggleSidebar}
       ></label>
-      <aside className="w-64 h-full bg-base-200 relative overflow-y-auto">
+      <aside className="w-64 h-full bg-base-200 relative overflow-y-auto border-r border-base-300">
         {/* Logo 区域 */}
         <div className="flex items-center justify-start h-20 border-b border-base-300 px-4">
           <div className="flex items-center gap-3">
