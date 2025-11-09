@@ -1,6 +1,10 @@
 import { TranscriptionResource } from '../../../models'
-import { HiFolder, HiClock } from 'react-icons/hi2'
+import {
+  HiFolder,
+  HiClock,
+} from 'react-icons/hi2'
 import Tooltip from '../../../componets/Tooltip'
+import ResourceNameWithIcon from '../../../componets/ResourceNameWithIcon'
 import { formatDateTime } from '../../../utils/format'
 
 interface ResourceCardProps {
@@ -16,15 +20,21 @@ const ResourceCard = ({ resource, onClick }: ResourceCardProps) => {
     >
       <div className="card-body flex flex-col">
         <div className="flex items-start justify-between mb-4">
-          <h3 className="card-title text-base" title={resource.name}>
-            {resource.name}
+          <h3
+            className="card-title text-base flex-1 min-w-0"
+            title={resource.name}
+          >
+            <ResourceNameWithIcon
+              resourceType={resource.resource_type}
+              name={resource.name}
+            />
           </h3>
         </div>
 
         <div className="mt-auto space-y-2">
           <Tooltip
             content={resource.file_path}
-            className='w-full'
+            className="w-full"
             contentClassName="p-4 font-mono text-xs"
           >
             <div className="text-xs text-base-content/50 flex items-center gap-1">
