@@ -1,41 +1,89 @@
+import { memo, useMemo } from 'react'
 import Player from '../../../componets/Player'
-import { TranscriptionResource } from '../../../models'
+import { TranscriptionResource, ResourceType } from '../../../models'
 import { HiTrash } from 'react-icons/hi2'
+import { useAppSelector } from '../../../redux/hooks'
 
 interface ResourceInfoCardProps {
   resource: TranscriptionResource
   audioSrc: string | null
+  videoSrc: string | null
   onAudioError: (error: string) => void
+  onVideoError: (error: string) => void
   onDelete?: () => void
 }
 
-const ResourceInfoCard = ({
+const ResourceInfoCard = memo(({
   resource,
   audioSrc,
+  videoSrc,
   onAudioError,
+  onVideoError,
   onDelete,
 }: ResourceInfoCardProps) => {
+  const extractionState = useAppSelector(
+    (state) => state.videoExtraction.extractions[resource.id]
+  )
+  const isExtracting = extractionState?.isExtracting ?? false
+  const isVideo = resource.resource_type === ResourceType.VIDEO
+  
+  // 使用 useMemo 稳定 Player 的 props
+  const playerKey = useMemo(() => {
+    return isVideo ? `video-${resource.id}-${videoSrc}` : `audio-${resource.id}-${audioSrc}`
+  }, [isVideo, resource.id, videoSrc, audioSrc])
+
   return (
     <div className="h-full flex flex-col p-6">
-      {/* 音频预览 */}
+      {/* 视频/音频预览 */}
       <div className="mb-4 pb-4 border-b border-base-300">
-        {audioSrc ? (
-          <div className="space-y-2">
-            <Player
-              src={audioSrc}
-              type="audio"
-              onError={(error: unknown) => {
-                console.error('音频加载失败:', error)
-                onAudioError(
-                  '音频文件无法播放，可能是文件格式不支持或文件已损坏',
-                )
-              }}
-            />
-          </div>
+        {isVideo ? (
+          // 视频资源：显示视频播放器
+          videoSrc ? (
+            <div className="space-y-2">
+              <Player
+                key={playerKey}
+                src={videoSrc}
+                type="video"
+                onError={(error: unknown) => {
+                  console.error('视频加载失败:', error)
+                  onVideoError(
+                    '视频文件无法播放，可能是文件格式不支持或文件已损坏',
+                  )
+                }}
+              />
+              {/* 提取进度显示 */}
+              {isExtracting && (
+                <div className="text-xs text-base-content/70">
+                  正在提取音频...
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-base-content/50">
+              视频文件加载中...
+            </div>
+          )
         ) : (
-          <div className="text-sm text-base-content/50">
-            音频文件加载中...
-          </div>
+          // 音频资源：显示音频播放器
+          audioSrc ? (
+            <div className="space-y-2">
+              <Player
+                key={playerKey}
+                src={audioSrc}
+                type="audio"
+                onError={(error: unknown) => {
+                  console.error('音频加载失败:', error)
+                  onAudioError(
+                    '音频文件无法播放，可能是文件格式不支持或文件已损坏',
+                  )
+                }}
+              />
+            </div>
+          ) : (
+            <div className="text-sm text-base-content/50">
+              音频文件加载中...
+            </div>
+          )
         )}
       </div>
 
@@ -79,7 +127,9 @@ const ResourceInfoCard = ({
       </div>
     </div>
   )
-}
+})
+
+ResourceInfoCard.displayName = 'ResourceInfoCard'
 
 export default ResourceInfoCard
 

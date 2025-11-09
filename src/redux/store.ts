@@ -2,12 +2,14 @@ import { configureStore } from '@reduxjs/toolkit';
 import featureKeysReducer from './slices/featureKeysSlice';
 import themeReducer from './slices/themeSlice';
 import transcriptionLogsReducer from './slices/transcriptionLogsSlice';
+import videoExtractionReducer from './slices/videoExtractionSlice';
 
 export const store = configureStore({
   reducer: {
     featureKeys: featureKeysReducer,
     theme: themeReducer,
     transcriptionLogs: transcriptionLogsReducer,
+    videoExtraction: videoExtractionReducer,
   },
 });
 

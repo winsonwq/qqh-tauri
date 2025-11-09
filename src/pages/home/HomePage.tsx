@@ -30,19 +30,32 @@ const HomePage = () => {
     loadResources();
   }, []);
 
-  // 选择音频文件并创建转写资源
+  // 选择音频或视频文件并创建转写资源
   const handleSelectAudioFile = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // 打开文件选择对话框
+      // 打开文件选择对话框，支持音频和视频文件
       const selected = await open({
         multiple: false,
         filters: [
           {
+            name: '音频和视频文件',
+            extensions: [
+              // 音频格式
+              'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac', 'wma',
+              // 视频格式
+              'mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp',
+            ],
+          },
+          {
             name: '音频文件',
             extensions: ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac', 'wma'],
+          },
+          {
+            name: '视频文件',
+            extensions: ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv', 'webm', 'm4v', '3gp'],
           },
         ],
       });
@@ -115,8 +128,8 @@ const HomePage = () => {
         <div className="card-body">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="card-title">音频转写资源</h2>
-              <p className="text-base-content/70 mt-1">选择音频文件创建转写资源，支持 MP3、WAV、M4A 等格式</p>
+              <h2 className="card-title">转写资源</h2>
+              <p className="text-base-content/70 mt-1">选择音频或视频文件创建转写资源，支持 MP3、WAV、M4A、MP4、AVI、MOV 等格式</p>
             </div>
             <button
               className={`btn btn-primary ${loading ? 'loading' : ''}`}
@@ -124,7 +137,7 @@ const HomePage = () => {
               disabled={loading}
             >
               <HiPlus className="w-5 h-5" />
-              {loading ? '处理中...' : '添加音频文件'}
+              {loading ? '处理中...' : '添加资源'}
             </button>
           </div>
           {error && (
@@ -142,7 +155,7 @@ const HomePage = () => {
             <div className="text-center py-12 text-base-content/50">
               <HiDocumentText className="w-16 h-16 mx-auto mb-4 opacity-50" />
               <p className="text-lg">暂无转写资源</p>
-              <p className="text-sm mt-2">点击上方按钮选择音频文件创建资源</p>
+              <p className="text-sm mt-2">点击上方按钮选择音频或视频文件创建资源</p>
             </div>
           </div>
         </div>

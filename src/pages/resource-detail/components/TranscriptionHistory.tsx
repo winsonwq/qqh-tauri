@@ -19,6 +19,7 @@ interface TranscriptionHistoryProps {
   selectedTaskId: string | null;
   resultContent: string | null;
   resourceName?: string; // 资源名称，用于生成默认导出文件名
+  canCreateTask?: boolean; // 是否可以创建任务（例如，视频资源正在提取音频时不能创建）
   onSelectTask: (taskId: string | null) => void;
   onCreateTask: () => void;
   onTaskDeleted?: () => void; // 任务删除后的回调
@@ -30,6 +31,7 @@ const TranscriptionHistory = ({
   selectedTaskId,
   resultContent,
   resourceName,
+  canCreateTask = true,
   onSelectTask,
   onCreateTask,
   onTaskDeleted,
@@ -210,6 +212,8 @@ const TranscriptionHistory = ({
           <button
             className="btn btn-primary btn-sm"
             onClick={onCreateTask}
+            disabled={!canCreateTask}
+            title={!canCreateTask ? '视频资源正在提取音频，请稍候...' : undefined}
           >
             创建转写任务
           </button>

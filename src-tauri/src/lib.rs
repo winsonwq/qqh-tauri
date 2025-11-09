@@ -12,15 +12,33 @@ use std::collections::HashMap;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
+// 转写资源类型
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum ResourceType {
+    #[serde(rename = "audio")]
+    Audio,
+    #[serde(rename = "video")]
+    Video,
+}
+
 // 转写资源模型
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TranscriptionResource {
     pub id: String,
     pub name: String,
     pub file_path: String,
+    #[serde(default = "default_resource_type")]
+    pub resource_type: ResourceType,
+    #[serde(default)]
+    pub extracted_audio_path: Option<String>, // 提取的音频路径（仅视频资源有）
     pub status: String, // "pending" | "processing" | "completed" | "failed"
     pub created_at: String,
     pub updated_at: String,
+}
+
+// 默认资源类型（用于兼容旧数据）
+fn default_resource_type() -> ResourceType {
+    ResourceType::Audio
 }
 
 // 转写任务模型
@@ -92,6 +110,41 @@ impl RunningTasks {
     }
 }
 
+// 运行中的音频提取进程管理器
+#[derive(Clone)]
+pub struct RunningExtractions {
+    // 存储 resource_id -> Arc<Mutex<Child>> 进程句柄
+    extractions: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+}
+
+impl RunningExtractions {
+    pub fn new() -> Self {
+        Self {
+            extractions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn insert(&self, resource_id: String, child: Child) {
+        let mut extractions = self.extractions.lock().await;
+        extractions.insert(resource_id, Arc::new(Mutex::new(child)));
+    }
+
+    pub async fn remove(&self, resource_id: &str) -> Option<Arc<Mutex<Child>>> {
+        let mut extractions = self.extractions.lock().await;
+        extractions.remove(resource_id)
+    }
+
+    pub async fn get(&self, resource_id: &str) -> Option<Arc<Mutex<Child>>> {
+        let extractions = self.extractions.lock().await;
+        extractions.get(resource_id).cloned()
+    }
+
+    pub async fn contains(&self, resource_id: &str) -> bool {
+        let extractions = self.extractions.lock().await;
+        extractions.contains_key(resource_id)
+    }
+}
+
 // 获取应用数据目录
 fn get_app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app
@@ -140,6 +193,35 @@ fn get_whisper_cli_path() -> Result<PathBuf, String> {
     Err("未找到 whisper-cli 可执行文件。请确保工具已正确打包到 tools 目录中。".to_string())
 }
 
+// 获取 ffmpeg 可执行文件路径
+fn get_ffmpeg_path() -> Result<PathBuf, String> {
+    // 获取应用资源目录（tools 文件夹所在位置）
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("无法获取当前可执行文件路径: {}", e))?;
+    
+    let exe_dir = exe_path.parent()
+        .ok_or("无法获取可执行文件目录")?;
+    
+    // 尝试多个可能的路径
+    let possible_paths = vec![
+        // 开发环境：从可执行文件目录向上查找
+        exe_dir.join("../../tools/ffmpeg/macos-arm64/ffmpeg"),
+        exe_dir.join("../tools/ffmpeg/macos-arm64/ffmpeg"),
+        // 生产环境：资源目录
+        exe_dir.join("resources/tools/ffmpeg/macos-arm64/ffmpeg"),
+        // 直接使用绝对路径（开发环境）
+        PathBuf::from("/Users/aqiu/projects/qqh-tauri/src-tauri/tools/ffmpeg/macos-arm64/ffmpeg"),
+    ];
+    
+    for path in possible_paths {
+        if path.exists() && path.is_file() {
+            return Ok(path);
+        }
+    }
+    
+    Err("未找到 ffmpeg 可执行文件。请确保工具已正确打包到 tools 目录中。".to_string())
+}
+
 // 辅助函数：读取流并实时发送事件
 fn spawn_stream_reader(
     stream: impl AsyncRead + Send + Unpin + 'static,
@@ -175,6 +257,90 @@ fn spawn_stream_reader(
     })
 }
 
+// 辅助函数：读取 ffmpeg 输出并解析进度，实时发送事件
+fn spawn_ffmpeg_progress_reader(
+    stream: impl AsyncRead + Send + Unpin + 'static,
+    app: tauri::AppHandle,
+    log_event_name: String,
+    progress_event_name: String,
+    total_duration: Option<f64>, // 总时长（秒），如果已知
+) -> JoinHandle<String> {
+    tokio::spawn(async move {
+        use tokio::io::AsyncBufReadExt;
+        let reader = tokio::io::BufReader::new(stream);
+        let mut lines = reader.lines();
+        let mut output = String::new();
+        
+        while let Ok(Some(line)) = lines.next_line().await {
+            let line_with_newline = format!("{}\n", line);
+            output.push_str(&line_with_newline);
+            
+            // 发送日志事件
+            let _ = app.emit(&log_event_name, &line);
+            
+            // 尝试解析进度
+            // ffmpeg 的 stderr 输出格式示例：
+            // frame=  123 fps= 25 q=28.0 size=    1024kB time=00:00:05.00 bitrate=1677.7kbits/s speed=1.0x
+            if line.contains("time=") {
+                // 提取时间信息
+                if let Some(time_start) = line.find("time=") {
+                    let time_str = &line[time_start + 5..];
+                    if let Some(time_end) = time_str.find(" ") {
+                        let time_value = &time_str[..time_end];
+                        // 解析时间格式 HH:MM:SS.mmm
+                        if let Ok(duration_secs) = parse_time_to_seconds(time_value) {
+                            // 如果知道总时长，计算进度百分比
+                            if let Some(total) = total_duration {
+                                let progress = (duration_secs / total * 100.0).min(100.0);
+                                let _ = app.emit(&progress_event_name, &progress);
+                            } else {
+                                // 只发送当前时间
+                                let _ = app.emit(&progress_event_name, &duration_secs);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        output
+    })
+}
+
+// 解析时间字符串（HH:MM:SS.mmm 或 MM:SS.mmm）为秒数
+fn parse_time_to_seconds(time_str: &str) -> Result<f64, String> {
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() == 3 {
+        // HH:MM:SS.mmm
+        let hours: f64 = parts[0].parse().map_err(|_| "无法解析小时")?;
+        let minutes: f64 = parts[1].parse().map_err(|_| "无法解析分钟")?;
+        let seconds: f64 = parts[2].parse().map_err(|_| "无法解析秒")?;
+        Ok(hours * 3600.0 + minutes * 60.0 + seconds)
+    } else if parts.len() == 2 {
+        // MM:SS.mmm
+        let minutes: f64 = parts[0].parse().map_err(|_| "无法解析分钟")?;
+        let seconds: f64 = parts[1].parse().map_err(|_| "无法解析秒")?;
+        Ok(minutes * 60.0 + seconds)
+    } else {
+        Err("时间格式不正确".to_string())
+    }
+}
+
+// 检测文件类型（根据扩展名）
+fn detect_resource_type(file_path: &str) -> ResourceType {
+    let path = PathBuf::from(file_path);
+    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+        let ext_lower = ext.to_lowercase();
+        match ext_lower.as_str() {
+            "mp4" | "avi" | "mov" | "mkv" | "wmv" | "flv" | "webm" | "m4v" | "3gp" => {
+                ResourceType::Video
+            }
+            _ => ResourceType::Audio,
+        }
+    } else {
+        ResourceType::Audio
+    }
+}
+
 // 创建转写资源
 #[tauri::command]
 async fn create_transcription_resource(
@@ -185,10 +351,15 @@ async fn create_transcription_resource(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     
+    // 检测资源类型
+    let resource_type = detect_resource_type(&file_path);
+    
     let resource = TranscriptionResource {
         id: id.clone(),
         name,
         file_path,
+        resource_type: resource_type.clone(),
+        extracted_audio_path: None,
         status: "pending".to_string(),
         created_at: now.clone(),
         updated_at: now,
@@ -308,7 +479,17 @@ async fn execute_transcription_task(
         .map_err(|e| format!("无法更新任务文件: {}", e))?;
     
     // 调用 whisper-cli 进行转写
-    let audio_path = PathBuf::from(&resource.file_path);
+    // 如果是视频资源，使用提取的音频路径；否则使用原始文件路径
+    let audio_path = match resource.resource_type {
+        ResourceType::Video => {
+            if let Some(extracted_path) = &resource.extracted_audio_path {
+                PathBuf::from(extracted_path)
+            } else {
+                return Err("视频资源尚未提取音频，请先提取音频".to_string());
+            }
+        }
+        ResourceType::Audio => PathBuf::from(&resource.file_path),
+    };
     let output_dir = app_data_dir.join("transcription_results");
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| format!("无法创建结果目录: {}", e))?;
@@ -664,8 +845,19 @@ async fn get_transcription_resources(
             let content = std::fs::read_to_string(&path)
                 .map_err(|e| format!("无法读取文件 {}: {}", path.display(), e))?;
             
-            let resource: TranscriptionResource = serde_json::from_str(&content)
+            let mut resource: TranscriptionResource = serde_json::from_str(&content)
                 .map_err(|e| format!("无法解析文件 {}: {}", path.display(), e))?;
+            
+            // 兼容旧数据：如果 resource_type 是默认值（Audio），但文件路径表明是视频，则更新
+            // 这样可以自动迁移旧数据
+            let detected_type = detect_resource_type(&resource.file_path);
+            if matches!(resource.resource_type, ResourceType::Audio) && matches!(detected_type, ResourceType::Video) {
+                resource.resource_type = ResourceType::Video;
+                // 保存更新后的资源（迁移旧数据）
+                let resource_json = serde_json::to_string_pretty(&resource)
+                    .map_err(|e| format!("无法序列化资源: {}", e))?;
+                let _ = std::fs::write(&path, resource_json);
+            }
             
             resources.push(resource);
         }
@@ -1106,6 +1298,209 @@ async fn execute_command(
     })
 }
 
+// 从视频中提取音频
+#[tauri::command]
+async fn extract_audio_from_video(
+    resource_id: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    // 读取资源文件
+    let app_data_dir = get_app_data_dir(&app)?;
+    let resources_dir = app_data_dir.join("transcription_resources");
+    let resource_file = resources_dir.join(format!("{}.json", resource_id));
+    
+    let resource_content = std::fs::read_to_string(&resource_file)
+        .map_err(|e| format!("无法读取资源文件: {}", e))?;
+    
+    let mut resource: TranscriptionResource = serde_json::from_str(&resource_content)
+        .map_err(|e| format!("无法解析资源文件: {}", e))?;
+    
+    // 检查资源类型
+    match resource.resource_type {
+        ResourceType::Audio => {
+            return Err("该资源是音频文件，无需提取".to_string());
+        }
+        ResourceType::Video => {
+            // 继续处理
+        }
+    }
+    
+    // 检查是否已经有提取的音频
+    if resource.extracted_audio_path.is_some() {
+        let audio_path = resource.extracted_audio_path.as_ref().unwrap();
+        if PathBuf::from(audio_path).exists() {
+            return Ok(format!("音频已提取: {}", audio_path));
+        }
+    }
+    
+    // 检查是否正在提取中
+    let running_extractions: State<'_, RunningExtractions> = app.state();
+    if running_extractions.contains(&resource_id).await {
+        return Ok("音频提取正在进行中".to_string());
+    }
+    
+    // 更新资源状态为 processing
+    resource.status = "processing".to_string();
+    resource.updated_at = Utc::now().to_rfc3339();
+    let resource_json = serde_json::to_string_pretty(&resource)
+        .map_err(|e| format!("无法序列化资源: {}", e))?;
+    std::fs::write(&resource_file, resource_json)
+        .map_err(|e| format!("无法更新资源文件: {}", e))?;
+    
+    // 获取 ffmpeg 路径
+    let ffmpeg_path = get_ffmpeg_path()?;
+    
+    // 准备输出文件路径
+    let extracted_audio_dir = app_data_dir.join("extracted_audio");
+    std::fs::create_dir_all(&extracted_audio_dir)
+        .map_err(|e| format!("无法创建提取音频目录: {}", e))?;
+    
+    let video_path = PathBuf::from(&resource.file_path);
+    let output_file_name = format!("{}.wav", resource_id);
+    let output_path = extracted_audio_dir.join(&output_file_name);
+    
+    // 构建 ffmpeg 命令
+    // ffmpeg -i input.mp4 -vn -acodec pcm_s16le -ar 16000 -ac 1 output.wav
+    // -vn: 不包含视频
+    // -acodec pcm_s16le: 音频编码为 PCM 16-bit little-endian
+    // -ar 16000: 采样率为 16000 Hz（适合 whisper）
+    // -ac 1: 单声道
+    let mut cmd = tokio::process::Command::new(&ffmpeg_path);
+    cmd.arg("-i")
+        .arg(&video_path)
+        .arg("-vn")  // 不包含视频
+        .arg("-acodec")
+        .arg("pcm_s16le")  // PCM 16-bit little-endian
+        .arg("-ar")
+        .arg("16000")  // 采样率 16000 Hz
+        .arg("-ac")
+        .arg("1")  // 单声道
+        .arg("-y")  // 覆盖输出文件
+        .arg(&output_path);
+    
+    // 设置 stdout 和 stderr 为管道
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    
+    // 启动进程
+    let mut child = cmd.spawn()
+        .map_err(|e| {
+            let err_msg = format!("无法执行 ffmpeg: {}。请确保工具已正确安装。", e);
+            eprintln!("{}", err_msg);
+            err_msg
+        })?;
+    
+    // 获取 stdout 和 stderr 的句柄
+    let stdout = child.stdout.take()
+        .ok_or("无法获取 stdout 句柄")?;
+    let stderr = child.stderr.take()
+        .ok_or("无法获取 stderr 句柄")?;
+    
+    // 将进程句柄存储到 RunningExtractions 中
+    running_extractions.insert(resource_id.clone(), child).await;
+    
+    // 创建事件名称
+    let log_event_name = format!("extraction-log-{}", resource_id);
+    let progress_event_name = format!("extraction-progress-{}", resource_id);
+    
+    // 读取 stdout（通常为空，但保留以防万一）
+    let stdout_handle = spawn_stream_reader(
+        stdout,
+        app.clone(),
+        log_event_name.clone(),
+        "stdout",
+        false,
+    );
+    
+    // 读取 stderr 并解析进度（ffmpeg 的进度信息在 stderr 中）
+    // 注意：我们不知道总时长，所以只发送当前时间
+    let stderr_handle = spawn_ffmpeg_progress_reader(
+        stderr,
+        app.clone(),
+        log_event_name,
+        progress_event_name,
+        None, // 暂时不解析总时长
+    );
+    
+    // 等待进程完成
+    let running_extractions_clone: State<'_, RunningExtractions> = app.state();
+    let status = loop {
+        if let Some(child_arc) = running_extractions_clone.get(&resource_id).await {
+            let mut child_guard = child_arc.lock().await;
+            if let Ok(Some(exit_status)) = child_guard.try_wait() {
+                let _ = running_extractions_clone.remove(&resource_id).await;
+                break exit_status;
+            }
+            drop(child_guard);
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        } else {
+            break std::process::ExitStatus::from_raw(130);
+        }
+    };
+    
+    // 获取输出
+    let _stdout_output = stdout_handle.await
+        .map_err(|e| format!("读取 stdout 失败: {}", e))?;
+    let stderr_output = stderr_handle.await
+        .map_err(|e| format!("读取 stderr 失败: {}", e))?;
+    
+    eprintln!("ffmpeg stdout: {}", _stdout_output);
+    eprintln!("ffmpeg stderr: {}", stderr_output);
+    eprintln!("ffmpeg 退出码: {:?}", status.code());
+    
+    if !status.success() {
+        let error_msg = if !stderr_output.is_empty() {
+            stderr_output.trim().to_string()
+        } else {
+            format!("ffmpeg 执行失败，退出码: {:?}", status.code())
+        };
+        
+        eprintln!("音频提取失败: {}", error_msg);
+        
+        resource.status = "failed".to_string();
+        resource.updated_at = Utc::now().to_rfc3339();
+        let resource_json = serde_json::to_string_pretty(&resource)
+            .map_err(|e| format!("无法序列化资源: {}", e))?;
+        std::fs::write(&resource_file, resource_json)
+            .map_err(|e| format!("无法更新资源文件: {}", e))?;
+        
+        return Err(format!("音频提取失败: {}", error_msg));
+    }
+    
+    // 检查输出文件是否存在
+    if !output_path.exists() {
+        let err_msg = format!("提取完成但未生成输出文件: {}", output_path.display());
+        eprintln!("{}", err_msg);
+        
+        resource.status = "failed".to_string();
+        resource.updated_at = Utc::now().to_rfc3339();
+        let resource_json = serde_json::to_string_pretty(&resource)
+            .map_err(|e| format!("无法序列化资源: {}", e))?;
+        std::fs::write(&resource_file, resource_json)
+            .map_err(|e| format!("无法更新资源文件: {}", e))?;
+        
+        return Err(err_msg);
+    }
+    
+    eprintln!("音频提取成功，输出文件: {}", output_path.display());
+    
+    // 更新资源状态为 completed，保存提取的音频路径
+    resource.status = "completed".to_string();
+    resource.extracted_audio_path = Some(output_path.to_string_lossy().to_string());
+    resource.updated_at = Utc::now().to_rfc3339();
+    
+    let resource_json = serde_json::to_string_pretty(&resource)
+        .map_err(|e| format!("无法序列化资源: {}", e))?;
+    std::fs::write(&resource_file, resource_json)
+        .map_err(|e| format!("无法更新资源文件: {}", e))?;
+    
+    // 发送 100% 进度事件
+    let progress_event_name = format!("extraction-progress-{}", resource_id);
+    let _ = app.emit(&progress_event_name, &100.0);
+    
+    Ok(output_path.to_string_lossy().to_string())
+}
+
 // 检查文件是否存在
 #[tauri::command]
 async fn check_file_exists(file_path: String) -> Result<bool, String> {
@@ -1120,6 +1515,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(RunningTasks::new())
+        .manage(RunningExtractions::new())
         .invoke_handler(tauri::generate_handler![
             create_transcription_resource,
             create_transcription_task,
@@ -1138,6 +1534,7 @@ pub fn run() {
             download_model,
             execute_command,
             check_file_exists,
+            extract_audio_from_video,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
