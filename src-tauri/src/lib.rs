@@ -1,3 +1,5 @@
+mod db;
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -158,6 +160,7 @@ fn get_app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     
     Ok(app_data_dir)
 }
+
 
 // 获取 whisper-cli 可执行文件路径
 fn get_whisper_cli_path() -> Result<PathBuf, String> {
@@ -365,20 +368,19 @@ async fn create_transcription_resource(
         updated_at: now,
     };
     
-    // 保存到文件
+    // 保存到数据库
     let app_data_dir = get_app_data_dir(&app)?;
-    let resources_dir = app_data_dir.join("transcription_resources");
-    std::fs::create_dir_all(&resources_dir)
-        .map_err(|e| format!("无法创建资源目录: {}", e))?;
+    let db_path = db::get_db_path(&app_data_dir);
     
-    let resource_file = resources_dir.join(format!("{}.json", id));
-    let json = serde_json::to_string_pretty(&resource)
-        .map_err(|e| format!("无法序列化资源: {}", e))?;
-    
-    std::fs::write(&resource_file, json)
-        .map_err(|e| format!("无法保存资源文件: {}", e))?;
-    
-    Ok(resource)
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::create_resource(&conn, &resource)
+            .map_err(|e| format!("无法保存资源到数据库: {}", e))?;
+        Ok(resource)
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // 创建转写任务
@@ -403,20 +405,19 @@ async fn create_transcription_task(
         params,
     };
     
-    // 保存到文件
+    // 保存到数据库
     let app_data_dir = get_app_data_dir(&app)?;
-    let tasks_dir = app_data_dir.join("transcription_tasks");
-    std::fs::create_dir_all(&tasks_dir)
-        .map_err(|e| format!("无法创建任务目录: {}", e))?;
+    let db_path = db::get_db_path(&app_data_dir);
     
-    let task_file = tasks_dir.join(format!("{}.json", id));
-    let json = serde_json::to_string_pretty(&task)
-        .map_err(|e| format!("无法序列化任务: {}", e))?;
-    
-    std::fs::write(&task_file, json)
-        .map_err(|e| format!("无法保存任务文件: {}", e))?;
-    
-    Ok(task)
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::create_task(&conn, &task)
+            .map_err(|e| format!("无法保存任务到数据库: {}", e))?;
+        Ok(task)
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // 执行转写任务（调用 faster-whisper）
@@ -426,34 +427,46 @@ async fn execute_transcription_task(
     resource_id: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    // 读取资源文件获取音频文件路径
     let app_data_dir = get_app_data_dir(&app)?;
-    let resources_dir = app_data_dir.join("transcription_resources");
-    let resource_file = resources_dir.join(format!("{}.json", resource_id));
+    let db_path = db::get_db_path(&app_data_dir);
     
-    let resource_content = std::fs::read_to_string(&resource_file)
-        .map_err(|e| format!("无法读取资源文件: {}", e))?;
-    
-    let mut resource: TranscriptionResource = serde_json::from_str(&resource_content)
-        .map_err(|e| format!("无法解析资源文件: {}", e))?;
+    // 从数据库读取资源和任务
+    let (mut resource, mut task): (TranscriptionResource, TranscriptionTask) = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        let resource_id = resource_id.clone();
+        move || -> Result<(TranscriptionResource, TranscriptionTask), String> {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            
+            let resource = db::get_resource(&conn, &resource_id)
+                .map_err(|e| format!("无法读取资源: {}", e))?
+                .ok_or_else(|| format!("转写资源不存在: {}", resource_id))?;
+            
+            let task = db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法读取任务: {}", e))?
+                .ok_or_else(|| format!("转写任务不存在: {}", task_id))?;
+            
+            Ok((resource, task))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 更新资源状态为 processing
     resource.status = "processing".to_string();
     resource.updated_at = Utc::now().to_rfc3339();
-    let resource_json = serde_json::to_string_pretty(&resource)
-        .map_err(|e| format!("无法序列化资源: {}", e))?;
-    std::fs::write(&resource_file, resource_json)
-        .map_err(|e| format!("无法更新资源文件: {}", e))?;
     
-    // 读取任务文件
-    let tasks_dir = app_data_dir.join("transcription_tasks");
-    let task_file = tasks_dir.join(format!("{}.json", task_id));
-    
-    let task_content = std::fs::read_to_string(&task_file)
-        .map_err(|e| format!("无法读取任务文件: {}", e))?;
-    
-    let mut task: TranscriptionTask = serde_json::from_str(&task_content)
-        .map_err(|e| format!("无法解析任务文件: {}", e))?;
+    let db_path_clone = db_path.clone();
+    let resource_clone = resource.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path_clone)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::update_resource(&conn, &resource_clone)
+            .map_err(|e| format!("无法更新资源: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 检查任务是否已经在运行
     let running_tasks: State<'_, RunningTasks> = app.state();
@@ -462,10 +475,16 @@ async fn execute_transcription_task(
         // 如果任务状态不是 running，更新为 running（可能是在重新进入页面时）
         if task.status != "running" {
             task.status = "running".to_string();
-            let task_json = serde_json::to_string_pretty(&task)
-                .map_err(|e| format!("无法序列化任务: {}", e))?;
-            std::fs::write(&task_file, task_json)
-                .map_err(|e| format!("无法更新任务文件: {}", e))?;
+            let db_path_clone = db_path.clone();
+            let task_clone = task.clone();
+            tokio::task::spawn_blocking(move || {
+                let conn = db::init_database(&db_path_clone)
+                    .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                db::update_task(&conn, &task_clone)
+                    .map_err(|e| format!("无法更新任务: {}", e))
+            })
+            .await
+            .map_err(|e| format!("数据库操作失败: {}", e))??;
         }
         // 返回一个占位符，表示任务已经在运行
         return Ok("任务已经在运行中".to_string());
@@ -473,10 +492,16 @@ async fn execute_transcription_task(
     
     // 更新任务状态为 running
     task.status = "running".to_string();
-    let task_json = serde_json::to_string_pretty(&task)
-        .map_err(|e| format!("无法序列化任务: {}", e))?;
-    std::fs::write(&task_file, task_json)
-        .map_err(|e| format!("无法更新任务文件: {}", e))?;
+    let db_path_clone = db_path.clone();
+    let task_clone = task.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path_clone)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::update_task(&conn, &task_clone)
+            .map_err(|e| format!("无法更新任务: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 调用 whisper-cli 进行转写
     // 如果是视频资源，使用提取的音频路径；否则使用原始文件路径
@@ -518,17 +543,22 @@ async fn execute_transcription_task(
         task.error = Some(err_msg.clone());
         task.completed_at = Some(Utc::now().to_rfc3339());
         
-        let task_json = serde_json::to_string_pretty(&task)
-            .map_err(|e| format!("无法序列化任务: {}", e))?;
-        std::fs::write(&task_file, task_json)
-            .map_err(|e| format!("无法更新任务文件: {}", e))?;
-        
         resource.status = "failed".to_string();
         resource.updated_at = Utc::now().to_rfc3339();
-        let resource_json = serde_json::to_string_pretty(&resource)
-            .map_err(|e| format!("无法序列化资源: {}", e))?;
-        std::fs::write(&resource_file, resource_json)
-            .map_err(|e| format!("无法更新资源文件: {}", e))?;
+        
+        let db_path_clone = db_path.clone();
+        let task_clone = task.clone();
+        let resource_clone = resource.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::update_task(&conn, &task_clone)
+                .map_err(|e| format!("无法更新任务: {}", e))?;
+            db::update_resource(&conn, &resource_clone)
+                .map_err(|e| format!("无法更新资源: {}", e))
+        })
+        .await
+        .map_err(|e| format!("数据库操作失败: {}", e))??;
         
         return Err(err_msg);
     }
@@ -687,17 +717,22 @@ async fn execute_transcription_task(
         task.error = Some(error_msg.clone());
         task.completed_at = Some(Utc::now().to_rfc3339());
         
-        let task_json = serde_json::to_string_pretty(&task)
-            .map_err(|e| format!("无法序列化任务: {}", e))?;
-        std::fs::write(&task_file, task_json)
-            .map_err(|e| format!("无法更新任务文件: {}", e))?;
-        
         resource.status = "failed".to_string();
         resource.updated_at = Utc::now().to_rfc3339();
-        let resource_json = serde_json::to_string_pretty(&resource)
-            .map_err(|e| format!("无法序列化资源: {}", e))?;
-        std::fs::write(&resource_file, resource_json)
-            .map_err(|e| format!("无法更新资源文件: {}", e))?;
+        
+        let db_path_clone = db_path.clone();
+        let task_clone = task.clone();
+        let resource_clone = resource.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::update_task(&conn, &task_clone)
+                .map_err(|e| format!("无法更新任务: {}", e))?;
+            db::update_resource(&conn, &resource_clone)
+                .map_err(|e| format!("无法更新资源: {}", e))
+        })
+        .await
+        .map_err(|e| format!("数据库操作失败: {}", e))??;
         
         return Err(format!("转写失败: {}", error_msg));
     }
@@ -711,17 +746,22 @@ async fn execute_transcription_task(
         task.error = Some(err_msg.clone());
         task.completed_at = Some(Utc::now().to_rfc3339());
         
-        let task_json = serde_json::to_string_pretty(&task)
-            .map_err(|e| format!("无法序列化任务: {}", e))?;
-        std::fs::write(&task_file, task_json)
-            .map_err(|e| format!("无法更新任务文件: {}", e))?;
-        
         resource.status = "failed".to_string();
         resource.updated_at = Utc::now().to_rfc3339();
-        let resource_json = serde_json::to_string_pretty(&resource)
-            .map_err(|e| format!("无法序列化资源: {}", e))?;
-        std::fs::write(&resource_file, resource_json)
-            .map_err(|e| format!("无法更新资源文件: {}", e))?;
+        
+        let db_path_clone = db_path.clone();
+        let task_clone = task.clone();
+        let resource_clone = resource.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::update_task(&conn, &task_clone)
+                .map_err(|e| format!("无法更新任务: {}", e))?;
+            db::update_resource(&conn, &resource_clone)
+                .map_err(|e| format!("无法更新资源: {}", e))
+        })
+        .await
+        .map_err(|e| format!("数据库操作失败: {}", e))??;
         
         return Err(err_msg);
     }
@@ -734,18 +774,23 @@ async fn execute_transcription_task(
     task.result = Some(output_file.to_string_lossy().to_string());
     // log 已经在上面保存了
     
-    let task_json = serde_json::to_string_pretty(&task)
-        .map_err(|e| format!("无法序列化任务: {}", e))?;
-    std::fs::write(&task_file, task_json)
-        .map_err(|e| format!("无法更新任务文件: {}", e))?;
-    
     // 更新资源状态为 completed
     resource.status = "completed".to_string();
     resource.updated_at = Utc::now().to_rfc3339();
-    let resource_json = serde_json::to_string_pretty(&resource)
-        .map_err(|e| format!("无法序列化资源: {}", e))?;
-    std::fs::write(&resource_file, resource_json)
-        .map_err(|e| format!("无法更新资源文件: {}", e))?;
+    
+    let db_path_clone = db_path.clone();
+    let task_clone = task.clone();
+    let resource_clone = resource.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path_clone)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::update_task(&conn, &task_clone)
+            .map_err(|e| format!("无法更新任务: {}", e))?;
+        db::update_resource(&conn, &resource_clone)
+            .map_err(|e| format!("无法更新资源: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     Ok(output_file.to_string_lossy().to_string())
 }
@@ -758,19 +803,22 @@ async fn stop_transcription_task(
 ) -> Result<(), String> {
     let running_tasks: State<'_, RunningTasks> = app.state();
     let app_data_dir = get_app_data_dir(&app)?;
-    let tasks_dir = app_data_dir.join("transcription_tasks");
-    let task_file = tasks_dir.join(format!("{}.json", task_id));
+    let db_path = db::get_db_path(&app_data_dir);
     
-    // 首先读取任务文件，检查任务状态
-    if !task_file.exists() {
-        return Err(format!("任务 {} 不存在", task_id));
-    }
-    
-    let task_content = std::fs::read_to_string(&task_file)
-        .map_err(|e| format!("无法读取任务文件: {}", e))?;
-    
-    let mut task: TranscriptionTask = serde_json::from_str(&task_content)
-        .map_err(|e| format!("无法解析任务文件: {}", e))?;
+    // 从数据库读取任务
+    let mut task = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        move || {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法读取任务: {}", e))?
+                .ok_or_else(|| format!("任务 {} 不存在", task_id))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 如果任务状态不是 RUNNING，不允许停止
     if task.status != "running" {
@@ -812,10 +860,16 @@ async fn stop_transcription_task(
     task.error = Some("任务已被用户停止".to_string());
     task.completed_at = Some(Utc::now().to_rfc3339());
     
-    let task_json = serde_json::to_string_pretty(&task)
-        .map_err(|e| format!("无法序列化任务: {}", e))?;
-    std::fs::write(&task_file, task_json)
-        .map_err(|e| format!("无法更新任务文件: {}", e))?;
+    let db_path_clone = db_path.clone();
+    let task_clone = task.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path_clone)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::update_task(&conn, &task_clone)
+            .map_err(|e| format!("无法更新任务: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     Ok(())
 }
@@ -826,47 +880,16 @@ async fn get_transcription_resources(
     app: tauri::AppHandle,
 ) -> Result<Vec<TranscriptionResource>, String> {
     let app_data_dir = get_app_data_dir(&app)?;
-    let resources_dir = app_data_dir.join("transcription_resources");
+    let db_path = db::get_db_path(&app_data_dir);
     
-    if !resources_dir.exists() {
-        return Ok(vec![]);
-    }
-    
-    let mut resources = Vec::new();
-    
-    let entries = std::fs::read_dir(&resources_dir)
-        .map_err(|e| format!("无法读取资源目录: {}", e))?;
-    
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("无法读取目录项: {}", e))?;
-        let path = entry.path();
-        
-        if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| format!("无法读取文件 {}: {}", path.display(), e))?;
-            
-            let mut resource: TranscriptionResource = serde_json::from_str(&content)
-                .map_err(|e| format!("无法解析文件 {}: {}", path.display(), e))?;
-            
-            // 兼容旧数据：如果 resource_type 是默认值（Audio），但文件路径表明是视频，则更新
-            // 这样可以自动迁移旧数据
-            let detected_type = detect_resource_type(&resource.file_path);
-            if matches!(resource.resource_type, ResourceType::Audio) && matches!(detected_type, ResourceType::Video) {
-                resource.resource_type = ResourceType::Video;
-                // 保存更新后的资源（迁移旧数据）
-                let resource_json = serde_json::to_string_pretty(&resource)
-                    .map_err(|e| format!("无法序列化资源: {}", e))?;
-                let _ = std::fs::write(&path, resource_json);
-            }
-            
-            resources.push(resource);
-        }
-    }
-    
-    // 按创建时间排序
-    resources.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    
-    Ok(resources)
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::get_all_resources(&conn)
+            .map_err(|e| format!("无法从数据库读取资源: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // 获取转写任务列表
@@ -876,38 +899,22 @@ async fn get_transcription_tasks(
     app: tauri::AppHandle,
 ) -> Result<Vec<TranscriptionTask>, String> {
     let app_data_dir = get_app_data_dir(&app)?;
-    let tasks_dir = app_data_dir.join("transcription_tasks");
+    let db_path = db::get_db_path(&app_data_dir);
     
-    if !tasks_dir.exists() {
-        return Ok(vec![]);
-    }
-    
-    let mut tasks = Vec::new();
-    
-    let entries = std::fs::read_dir(&tasks_dir)
-        .map_err(|e| format!("无法读取任务目录: {}", e))?;
-    
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("无法读取目录项: {}", e))?;
-        let path = entry.path();
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
         
-        if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| format!("无法读取文件 {}: {}", path.display(), e))?;
-            
-            let task: TranscriptionTask = serde_json::from_str(&content)
-                .map_err(|e| format!("无法解析文件 {}: {}", path.display(), e))?;
-            
-            if resource_id.is_none() || task.resource_id == *resource_id.as_ref().unwrap() {
-                tasks.push(task);
-            }
+        if let Some(res_id) = resource_id {
+            db::get_tasks_by_resource(&conn, &res_id)
+                .map_err(|e| format!("无法从数据库读取任务: {}", e))
+        } else {
+            db::get_all_tasks(&conn)
+                .map_err(|e| format!("无法从数据库读取任务: {}", e))
         }
-    }
-    
-    // 按创建时间排序
-    tasks.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    
-    Ok(tasks)
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // 获取单个转写任务
@@ -917,20 +924,17 @@ async fn get_transcription_task(
     app: tauri::AppHandle,
 ) -> Result<TranscriptionTask, String> {
     let app_data_dir = get_app_data_dir(&app)?;
-    let tasks_dir = app_data_dir.join("transcription_tasks");
-    let task_file = tasks_dir.join(format!("{}.json", task_id));
+    let db_path = db::get_db_path(&app_data_dir);
     
-    if !task_file.exists() {
-        return Err(format!("转写任务不存在: {}", task_id));
-    }
-    
-    let content = std::fs::read_to_string(&task_file)
-        .map_err(|e| format!("无法读取任务文件: {}", e))?;
-    
-    let task: TranscriptionTask = serde_json::from_str(&content)
-        .map_err(|e| format!("无法解析任务文件: {}", e))?;
-    
-    Ok(task)
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::get_task(&conn, &task_id)
+            .map_err(|e| format!("无法从数据库读取任务: {}", e))?
+            .ok_or_else(|| format!("转写任务不存在: {}", task_id))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // 删除转写资源
@@ -940,20 +944,28 @@ async fn delete_transcription_resource(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let app_data_dir = get_app_data_dir(&app)?;
-    let resources_dir = app_data_dir.join("transcription_resources");
-    let resource_file = resources_dir.join(format!("{}.json", resource_id));
+    let db_path = db::get_db_path(&app_data_dir);
     
-    if !resource_file.exists() {
-        return Err(format!("转写资源不存在: {}", resource_id));
-    }
-    
-    // 删除资源文件
-    std::fs::remove_file(&resource_file)
-        .map_err(|e| format!("无法删除资源文件: {}", e))?;
-    
-    // 注意：不删除关联的任务，任务可以独立存在
-    
-    Ok(())
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        // 检查资源是否存在
+        if db::get_resource(&conn, &resource_id)
+            .map_err(|e| format!("无法查询资源: {}", e))?
+            .is_none() {
+            return Err(format!("转写资源不存在: {}", resource_id));
+        }
+        
+        db::delete_resource(&conn, &resource_id)
+            .map_err(|e| format!("无法删除资源: {}", e))?;
+        
+        // 注意：不删除关联的任务，任务可以独立存在
+        
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // 删除转写任务
@@ -963,33 +975,32 @@ async fn delete_transcription_task(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let app_data_dir = get_app_data_dir(&app)?;
-    let tasks_dir = app_data_dir.join("transcription_tasks");
-    let task_file = tasks_dir.join(format!("{}.json", task_id));
+    let db_path = db::get_db_path(&app_data_dir);
     
-    if !task_file.exists() {
-        return Err(format!("转写任务不存在: {}", task_id));
-    }
-    
-    // 读取任务信息，以便删除关联的结果文件
-    let task_content = std::fs::read_to_string(&task_file)
-        .map_err(|e| format!("无法读取任务文件: {}", e))?;
-    
-    let task: TranscriptionTask = serde_json::from_str(&task_content)
-        .map_err(|e| format!("无法解析任务文件: {}", e))?;
-    
-    // 删除结果文件（如果存在）
-    if let Some(result_path) = task.result {
-        let result_file = PathBuf::from(&result_path);
-        if result_file.exists() {
-            let _ = std::fs::remove_file(&result_file);
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        // 读取任务信息，以便删除关联的结果文件
+        let task = db::get_task(&conn, &task_id)
+            .map_err(|e| format!("无法查询任务: {}", e))?
+            .ok_or_else(|| format!("转写任务不存在: {}", task_id))?;
+        
+        // 删除结果文件（如果存在）
+        if let Some(result_path) = task.result {
+            let result_file = PathBuf::from(&result_path);
+            if result_file.exists() {
+                let _ = std::fs::remove_file(&result_file);
+            }
         }
-    }
-    
-    // 删除任务文件
-    std::fs::remove_file(&task_file)
-        .map_err(|e| format!("无法删除任务文件: {}", e))?;
-    
-    Ok(())
+        
+        db::delete_task(&conn, &task_id)
+            .map_err(|e| format!("无法删除任务: {}", e))?;
+        
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // 读取转写结果文件内容
@@ -999,31 +1010,31 @@ async fn read_transcription_result(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let app_data_dir = get_app_data_dir(&app)?;
-    let tasks_dir = app_data_dir.join("transcription_tasks");
-    let task_file = tasks_dir.join(format!("{}.json", task_id));
+    let db_path = db::get_db_path(&app_data_dir);
     
-    if !task_file.exists() {
-        return Err(format!("转写任务不存在: {}", task_id));
-    }
-    
-    let task_content = std::fs::read_to_string(&task_file)
-        .map_err(|e| format!("无法读取任务文件: {}", e))?;
-    
-    let task: TranscriptionTask = serde_json::from_str(&task_content)
-        .map_err(|e| format!("无法解析任务文件: {}", e))?;
-    
-    if let Some(result_path) = task.result {
-        let result_file = PathBuf::from(&result_path);
-        if result_file.exists() {
-            let content = std::fs::read_to_string(&result_file)
-                .map_err(|e| format!("无法读取结果文件: {}", e))?;
-            Ok(content)
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        
+        let task = db::get_task(&conn, &task_id)
+            .map_err(|e| format!("无法查询任务: {}", e))?
+            .ok_or_else(|| format!("转写任务不存在: {}", task_id))?;
+        
+        if let Some(result_path) = task.result {
+            let result_file = PathBuf::from(&result_path);
+            if result_file.exists() {
+                let content = std::fs::read_to_string(&result_file)
+                    .map_err(|e| format!("无法读取结果文件: {}", e))?;
+                Ok(content)
+            } else {
+                Err("结果文件不存在".to_string())
+            }
         } else {
-            Err("结果文件不存在".to_string())
+            Err("转写任务尚未完成或没有结果".to_string())
         }
-    } else {
-        Err("转写任务尚未完成或没有结果".to_string())
-    }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
 }
 
 // whisper-cli 环境检测结果
@@ -1304,16 +1315,23 @@ async fn extract_audio_from_video(
     resource_id: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    // 读取资源文件
     let app_data_dir = get_app_data_dir(&app)?;
-    let resources_dir = app_data_dir.join("transcription_resources");
-    let resource_file = resources_dir.join(format!("{}.json", resource_id));
+    let db_path = db::get_db_path(&app_data_dir);
     
-    let resource_content = std::fs::read_to_string(&resource_file)
-        .map_err(|e| format!("无法读取资源文件: {}", e))?;
-    
-    let mut resource: TranscriptionResource = serde_json::from_str(&resource_content)
-        .map_err(|e| format!("无法解析资源文件: {}", e))?;
+    // 从数据库读取资源
+    let mut resource = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let resource_id = resource_id.clone();
+        move || {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_resource(&conn, &resource_id)
+                .map_err(|e| format!("无法读取资源: {}", e))?
+                .ok_or_else(|| format!("转写资源不存在: {}", resource_id))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 检查资源类型
     match resource.resource_type {
@@ -1342,10 +1360,17 @@ async fn extract_audio_from_video(
     // 更新资源状态为 processing
     resource.status = "processing".to_string();
     resource.updated_at = Utc::now().to_rfc3339();
-    let resource_json = serde_json::to_string_pretty(&resource)
-        .map_err(|e| format!("无法序列化资源: {}", e))?;
-    std::fs::write(&resource_file, resource_json)
-        .map_err(|e| format!("无法更新资源文件: {}", e))?;
+    
+    let db_path_clone = db_path.clone();
+    let resource_clone = resource.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path_clone)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::update_resource(&conn, &resource_clone)
+            .map_err(|e| format!("无法更新资源: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 获取 ffmpeg 路径
     let ffmpeg_path = get_ffmpeg_path()?;
@@ -1459,10 +1484,17 @@ async fn extract_audio_from_video(
         
         resource.status = "failed".to_string();
         resource.updated_at = Utc::now().to_rfc3339();
-        let resource_json = serde_json::to_string_pretty(&resource)
-            .map_err(|e| format!("无法序列化资源: {}", e))?;
-        std::fs::write(&resource_file, resource_json)
-            .map_err(|e| format!("无法更新资源文件: {}", e))?;
+        
+        let db_path_clone = db_path.clone();
+        let resource_clone = resource.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::update_resource(&conn, &resource_clone)
+                .map_err(|e| format!("无法更新资源: {}", e))
+        })
+        .await
+        .map_err(|e| format!("数据库操作失败: {}", e))??;
         
         return Err(format!("音频提取失败: {}", error_msg));
     }
@@ -1474,10 +1506,17 @@ async fn extract_audio_from_video(
         
         resource.status = "failed".to_string();
         resource.updated_at = Utc::now().to_rfc3339();
-        let resource_json = serde_json::to_string_pretty(&resource)
-            .map_err(|e| format!("无法序列化资源: {}", e))?;
-        std::fs::write(&resource_file, resource_json)
-            .map_err(|e| format!("无法更新资源文件: {}", e))?;
+        
+        let db_path_clone = db_path.clone();
+        let resource_clone = resource.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::update_resource(&conn, &resource_clone)
+                .map_err(|e| format!("无法更新资源: {}", e))
+        })
+        .await
+        .map_err(|e| format!("数据库操作失败: {}", e))??;
         
         return Err(err_msg);
     }
@@ -1489,10 +1528,16 @@ async fn extract_audio_from_video(
     resource.extracted_audio_path = Some(output_path.to_string_lossy().to_string());
     resource.updated_at = Utc::now().to_rfc3339();
     
-    let resource_json = serde_json::to_string_pretty(&resource)
-        .map_err(|e| format!("无法序列化资源: {}", e))?;
-    std::fs::write(&resource_file, resource_json)
-        .map_err(|e| format!("无法更新资源文件: {}", e))?;
+    let db_path_clone = db_path.clone();
+    let resource_clone = resource.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path_clone)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::update_resource(&conn, &resource_clone)
+            .map_err(|e| format!("无法更新资源: {}", e))
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 发送 100% 进度事件
     let progress_event_name = format!("extraction-progress-{}", resource_id);
