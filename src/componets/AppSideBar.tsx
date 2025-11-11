@@ -175,7 +175,7 @@ const AppSideBar = ({ onToggleSidebar }: AppSideBarProps) => {
           <div className="flex items-center gap-3">
             <FaRobot className="h-8 w-8 text-black" />
             <div className="flex flex-col">
-              <span className="text-lg font-bold text-black leading-tight">回声转写</span>
+              <span className="text-lg font-bold text-black leading-tight">回音转写</span>
               <span className="text-xs font-medium text-black leading-tight">EchoScribe</span>
             </div>
           </div>
