@@ -99,14 +99,12 @@ const SettingsGeneralPage = () => {
         </div>
       </div>
 
-      {/* 模型下载弹出框 */}
-      {showDownloadModal && (
-        <ModelDownloadModal
-          isOpen={showDownloadModal}
-          onClose={() => setShowDownloadModal(false)}
-          onModelDownloaded={loadModels}
-        />
-      )}
+      {/* 模型下载弹出框始终挂载以保留下载状态 */}
+      <ModelDownloadModal
+        isOpen={showDownloadModal}
+        onClose={() => setShowDownloadModal(false)}
+        onModelDownloaded={loadModels}
+      />
     </div>
   )
 }
@@ -148,15 +146,17 @@ const ModelDownloadModal = ({
     if (isOpen) {
       loadModels()
     }
-    
-    // 清理函数：关闭事件监听
+  }, [isOpen])
+
+  // 组件卸载时清理事件监听
+  useEffect(() => {
     return () => {
       if (unlistenRef.current) {
         unlistenRef.current()
         unlistenRef.current = null
       }
     }
-  }, [isOpen])
+  }, [])
 
   // 下载模型
   const handleDownloadModel = async (modelName: string) => {
@@ -280,15 +280,17 @@ const ModelDownloadModal = ({
                     <div className="flex-1">
                       <div className="font-medium">{model.name}</div>
                       <div className="text-sm text-base-content/70">
-                        {model.downloaded
-                          ? `已下载 (${formatSize(model.size)})`
-                          : isDownloading && progress
+                        {isDownloading && progress
                           ? `下载中... ${progress.progress.toFixed(1)}%`
+                          : model.downloaded
+                          ? `已下载 (${formatSize(model.size)})`
                           : '未下载'}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {model.downloaded ? (
+                      {isDownloading ? (
+                        <div className="badge badge-info">下载中</div>
+                      ) : model.downloaded ? (
                         <div className="badge badge-success">已安装</div>
                       ) : (
                         <button
