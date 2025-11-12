@@ -183,7 +183,7 @@ const AppSideBar = ({ onToggleSidebar }: AppSideBarProps) => {
         <div className="flex items-center justify-start h-20 border-b border-base-300 px-4">
           <div className="flex items-center gap-3">
             <div className="flex flex-col">
-              <span className="text-xl font-bold text-black leading-tight">
+              <span className="text-xl font-bold text-base-content leading-tight">
                 Echo
               </span>
             </div>
