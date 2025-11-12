@@ -1279,6 +1279,28 @@ async fn download_model(
     Ok(format!("模型 {} 下载成功", model_name))
 }
 
+// 删除已下载的模型
+#[tauri::command]
+async fn delete_model(
+    model_name: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let app_data_dir = get_app_data_dir(&app)?;
+    let models_dir = app_data_dir.join("whisper_models");
+    let model_file_name = format!("ggml-{}.bin", model_name);
+    let model_path = models_dir.join(&model_file_name);
+
+    if !model_path.exists() {
+        return Err(format!("模型 {} 未下载", model_name));
+    }
+
+    tokio::fs::remove_file(&model_path)
+        .await
+        .map_err(|e| format!("删除模型文件失败: {}", e))?;
+
+    Ok(format!("模型 {} 已删除", model_name))
+}
+
 // 命令执行结果
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommandExecutionResult {
@@ -1654,6 +1676,7 @@ pub fn run() {
             get_models_dir,
             get_downloaded_models,
             download_model,
+            delete_model,
             execute_command,
             check_file_exists,
             extract_audio_from_video,

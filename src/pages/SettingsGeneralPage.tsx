@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { openPath } from '@tauri-apps/plugin-opener'
 import { ModelInfo, ModelDownloadProgress } from '../models'
-import { HiXCircle, HiArrowDownTray, HiFolderOpen } from 'react-icons/hi2'
+import { HiXCircle, HiArrowDownTray, HiFolderOpen, HiTrash } from 'react-icons/hi2'
 import { useMessage } from '../componets/Toast'
 
 const SettingsGeneralPage = () => {
@@ -126,6 +126,7 @@ const ModelDownloadModal = ({
   const [loadingModels, setLoadingModels] = useState(false)
   const [downloadingModel, setDownloadingModel] = useState<string | null>(null)
   const [downloadProgress, setDownloadProgress] = useState<Record<string, ModelDownloadProgress>>({})
+  const [deletingModel, setDeletingModel] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const unlistenRef = useRef<UnlistenFn | null>(null)
 
@@ -235,6 +236,25 @@ const ModelDownloadModal = ({
     }
   }
 
+  // 删除模型
+  const handleDeleteModel = async (modelName: string) => {
+    try {
+      setDeletingModel(modelName)
+      setError(null)
+      await invoke<string>('delete_model', { modelName })
+      message.success(`模型 ${modelName} 删除成功`)
+      await loadModels()
+      onModelDownloaded()
+    } catch (err) {
+      console.error('删除模型失败:', err)
+      const errorMsg = err instanceof Error ? err.message : '删除模型失败'
+      setError(errorMsg)
+      message.error(`模型 ${modelName} 删除失败: ${errorMsg}`)
+    } finally {
+      setDeletingModel(null)
+    }
+  }
+
   // 格式化文件大小
   const formatSize = (bytes?: number) => {
     if (!bytes) return '-'
@@ -291,14 +311,29 @@ const ModelDownloadModal = ({
                       {isDownloading ? (
                         <div className="badge badge-info">下载中</div>
                       ) : model.downloaded ? (
-                        <div className="badge badge-success">已安装</div>
+                        <div className="flex items-center gap-2">
+                          <div className="badge badge-success">已安装</div>
+                          <button
+                            className={`btn btn-outline btn-error btn-sm ${
+                              deletingModel === model.name ? 'loading' : ''
+                            }`}
+                            onClick={() => handleDeleteModel(model.name)}
+                            disabled={deletingModel !== null || downloadingModel !== null}
+                            title="删除模型"
+                          >
+                            {deletingModel !== model.name && (
+                              <HiTrash className="h-4 w-4" />
+                            )}
+                            <span className="ml-1">删除</span>
+                          </button>
+                        </div>
                       ) : (
                         <button
                           className={`btn ${
                             downloadingModel === model.name ? 'loading' : ''
                           }`}
                           onClick={() => handleDownloadModel(model.name)}
-                          disabled={downloadingModel !== null}
+                          disabled={downloadingModel !== null || deletingModel !== null}
                           title="下载模型"
                         >
                           {downloadingModel !== model.name && (
