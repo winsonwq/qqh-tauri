@@ -20,6 +20,7 @@ import DeleteConfirmModal from '../../componets/DeleteConfirmModal';
 import useResourceMedia from './hooks/useResourceMedia';
 import useTranscriptionTaskRuntime from './hooks/useTranscriptionTaskRuntime';
 import useTranscriptionTasksManager from './hooks/useTranscriptionTasksManager';
+import { PlayerRef } from '../../componets/Player';
 
 const ResourceDetailPage = () => {
   const dispatch = useAppDispatch();
@@ -68,6 +69,10 @@ const ResourceDetailPage = () => {
   const extractionUnlistenRef = useRef<{ log?: UnlistenFn }>({});
   // 用于跟踪是否已经触发过音频提取，避免重复触发
   const extractionTriggeredRef = useRef<Set<string>>(new Set());
+  
+  // 播放器引用和当前播放时间
+  const playerRef = useRef<PlayerRef>(null);
+  const [currentTime, setCurrentTime] = useState<number>(0);
 
   // 使用 useMemo 稳定 hasRunningTask，避免数组引用变化导致频繁触发
   const hasRunningTask = useMemo(() => {
@@ -214,6 +219,28 @@ const ResourceDetailPage = () => {
       message.error(err instanceof Error ? err.message : '创建转写任务失败');
     }
   };
+
+  // 监听播放器时间更新
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+    
+    // 使用轮询方式检查播放器是否已准备好
+    const checkPlayer = setInterval(() => {
+      if (playerRef.current && !cleanup) {
+        cleanup = playerRef.current.onTimeUpdate((time) => {
+          setCurrentTime(time);
+        });
+        clearInterval(checkPlayer);
+      }
+    }, 100);
+
+    return () => {
+      clearInterval(checkPlayer);
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, [audioSrc ?? '', videoSrc ?? '']); // 当音频/视频源变化时重新设置监听，使用空字符串作为默认值确保依赖数组大小一致
 
   // 组件卸载时清理监听器
   useEffect(() => {
@@ -378,6 +405,7 @@ const ResourceDetailPage = () => {
             onAudioError={(error: string) => message.error(error)}
             onVideoError={(error: string) => message.error(error)}
             onDelete={() => setShowDeleteModal(true)}
+            playerRef={playerRef}
           />
         </div>
 
@@ -393,6 +421,8 @@ const ResourceDetailPage = () => {
             onCreateTask={handleShowCreateTaskModal}
             onTaskDeleted={handleTaskDeleted}
             onTaskStopped={handleTaskStopped}
+            playerRef={playerRef}
+            currentTime={currentTime}
           />
         </div>
       </div>

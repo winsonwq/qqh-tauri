@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, memo } from 'react';
+import { useState, useMemo, useEffect, useRef, memo, RefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
@@ -14,6 +14,7 @@ import DeleteConfirmModal from '../../../componets/DeleteConfirmModal';
 import { convertToSRT } from '../../../utils/srtConverter';
 import { useMessage } from '../../../componets/Toast';
 import Select from '../../../componets/Select';
+import { PlayerRef } from '../../../componets/Player';
 
 interface TranscriptionHistoryProps {
   tasks: TranscriptionTask[];
@@ -25,6 +26,8 @@ interface TranscriptionHistoryProps {
   onCreateTask: () => void;
   onTaskDeleted?: () => void; // 任务删除后的回调
   onTaskStopped?: () => void; // 任务停止后的回调
+  playerRef?: RefObject<PlayerRef | null>; // 播放器引用
+  currentTime?: number; // 当前播放时间（秒）
 }
 
 const TranscriptionHistory = ({
@@ -37,6 +40,8 @@ const TranscriptionHistory = ({
   onCreateTask,
   onTaskDeleted,
   onTaskStopped,
+  playerRef,
+  currentTime,
 }: TranscriptionHistoryProps) => {
   const sortedTasks = useMemo(() => {
     return [...tasks].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -361,7 +366,13 @@ const TranscriptionHistory = ({
                     jsonData ? (
                       // 显示 JSON 格式的结果
                       <div className="space-y-2">
-                        <TranscriptionJsonView data={jsonData} />
+                        <TranscriptionJsonView
+                          data={jsonData}
+                          onSeek={(time) => {
+                            playerRef?.current?.seek(time)
+                          }}
+                          currentTime={currentTime}
+                        />
                       </div>
                     ) : (
                       // 显示文本格式的结果（兼容旧格式）

@@ -1,5 +1,5 @@
-import { memo, useMemo } from 'react'
-import Player from '../../../componets/Player'
+import { memo, useMemo, RefObject } from 'react'
+import Player, { PlayerRef } from '../../../componets/Player'
 import { TranscriptionResource, ResourceType } from '../../../models'
 import { HiTrash } from 'react-icons/hi2'
 import { useAppSelector } from '../../../redux/hooks'
@@ -12,6 +12,7 @@ interface ResourceInfoCardProps {
   onAudioError: (error: string) => void
   onVideoError: (error: string) => void
   onDelete?: () => void
+  playerRef?: RefObject<PlayerRef | null>
 }
 
 const ResourceInfoCard = memo(({
@@ -22,6 +23,7 @@ const ResourceInfoCard = memo(({
   onAudioError,
   onVideoError,
   onDelete,
+  playerRef,
 }: ResourceInfoCardProps) => {
   const extractionState = useAppSelector(
     (state) => state.videoExtraction.extractions[resource.id]
@@ -43,6 +45,7 @@ const ResourceInfoCard = memo(({
           videoSrc ? (
             <div className="space-y-2">
               <Player
+                ref={playerRef}
                 key={playerKey}
                 src={videoSrc}
                 type="video"
@@ -72,6 +75,7 @@ const ResourceInfoCard = memo(({
           audioSrc ? (
             <div className="space-y-2">
               <Player
+                ref={playerRef}
                 key={playerKey}
                 src={audioSrc}
                 type="audio"
