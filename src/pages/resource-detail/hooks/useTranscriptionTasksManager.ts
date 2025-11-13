@@ -181,11 +181,10 @@ const useTranscriptionTasksManager = ({
             }
           }
         } else {
-          // 如果不自动切换，但当前选中的任务已经停止或完成，则清除选中状态
+          // 如果不自动切换，但当前选中的任务已经完成或失败，则清除选中状态
           const currentSelectedTask = sortedTasks.find(t => t.id === selectedTaskIdRef.current);
           if (currentSelectedTask && 
-             (currentSelectedTask.status === TranscriptionTaskStatus.STOPPED || 
-              currentSelectedTask.status === TranscriptionTaskStatus.COMPLETED || 
+             (currentSelectedTask.status === TranscriptionTaskStatus.COMPLETED || 
               currentSelectedTask.status === TranscriptionTaskStatus.FAILED)) {
             setSelectedTaskId(null);
           }

@@ -1,6 +1,5 @@
 import {
   $applyNodeReplacement,
-  $isTextNode,
   DecoratorNode,
   NodeKey,
   SerializedLexicalNode,

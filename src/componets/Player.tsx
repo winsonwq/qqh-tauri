@@ -106,7 +106,7 @@ const Player = memo(
     useEffect(() => {
       if (!plyrComponentRef.current) return
 
-      let timeoutId: NodeJS.Timeout | null = null
+      let timeoutId: ReturnType<typeof setTimeout> | null = null
       let mediaElement: HTMLMediaElement | null = null
       let handleTimeUpdate: (() => void) | null = null
 
@@ -122,7 +122,8 @@ const Player = memo(
           }
 
           // 获取底层的 HTML5 媒体元素
-          const media = player.media as HTMLMediaElement
+          // Plyr 实例的 media 属性在运行时存在，但类型定义可能不完整
+          const media = (player as any).media as HTMLMediaElement
           if (!media) {
             timeoutId = setTimeout(checkPlayer, 100)
             return
