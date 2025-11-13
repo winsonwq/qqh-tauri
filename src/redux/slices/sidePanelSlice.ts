@@ -6,7 +6,7 @@ interface SidePanelState {
 }
 
 const initialState: SidePanelState = {
-  isOpen: false,
+  isOpen: true,
   currentComponent: 'ai', // 默认显示 AI 组件
 };
 
