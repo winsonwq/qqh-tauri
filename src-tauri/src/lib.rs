@@ -441,13 +441,11 @@ fn spawn_stream_reader(
     })
 }
 
-// 辅助函数：读取 ffmpeg 输出并解析进度，实时发送事件
+// 辅助函数：读取 ffmpeg 输出并发送日志事件
 fn spawn_ffmpeg_progress_reader(
     stream: impl AsyncRead + Send + Unpin + 'static,
     app: tauri::AppHandle,
     log_event_name: String,
-    progress_event_name: String,
-    total_duration: Option<f64>, // 总时长（秒），如果已知
 ) -> JoinHandle<String> {
     tokio::spawn(async move {
         use tokio::io::AsyncBufReadExt;
@@ -461,52 +459,9 @@ fn spawn_ffmpeg_progress_reader(
             
             // 发送日志事件
             let _ = app.emit(&log_event_name, &line);
-            
-            // 尝试解析进度
-            // ffmpeg 的 stderr 输出格式示例：
-            // frame=  123 fps= 25 q=28.0 size=    1024kB time=00:00:05.00 bitrate=1677.7kbits/s speed=1.0x
-            if line.contains("time=") {
-                // 提取时间信息
-                if let Some(time_start) = line.find("time=") {
-                    let time_str = &line[time_start + 5..];
-                    if let Some(time_end) = time_str.find(" ") {
-                        let time_value = &time_str[..time_end];
-                        // 解析时间格式 HH:MM:SS.mmm
-                        if let Ok(duration_secs) = parse_time_to_seconds(time_value) {
-                            // 如果知道总时长，计算进度百分比
-                            if let Some(total) = total_duration {
-                                let progress = (duration_secs / total * 100.0).min(100.0);
-                                let _ = app.emit(&progress_event_name, &progress);
-                            } else {
-                                // 只发送当前时间
-                                let _ = app.emit(&progress_event_name, &duration_secs);
-                            }
-                        }
-                    }
-                }
-            }
         }
         output
     })
-}
-
-// 解析时间字符串（HH:MM:SS.mmm 或 MM:SS.mmm）为秒数
-fn parse_time_to_seconds(time_str: &str) -> Result<f64, String> {
-    let parts: Vec<&str> = time_str.split(':').collect();
-    if parts.len() == 3 {
-        // HH:MM:SS.mmm
-        let hours: f64 = parts[0].parse().map_err(|_| "无法解析小时")?;
-        let minutes: f64 = parts[1].parse().map_err(|_| "无法解析分钟")?;
-        let seconds: f64 = parts[2].parse().map_err(|_| "无法解析秒")?;
-        Ok(hours * 3600.0 + minutes * 60.0 + seconds)
-    } else if parts.len() == 2 {
-        // MM:SS.mmm
-        let minutes: f64 = parts[0].parse().map_err(|_| "无法解析分钟")?;
-        let seconds: f64 = parts[1].parse().map_err(|_| "无法解析秒")?;
-        Ok(minutes * 60.0 + seconds)
-    } else {
-        Err("时间格式不正确".to_string())
-    }
 }
 
 // 检测文件类型（根据扩展名）
@@ -1713,7 +1668,6 @@ async fn extract_audio_from_video(
     
     // 创建事件名称
     let log_event_name = format!("extraction-log-{}", resource_id);
-    let progress_event_name = format!("extraction-progress-{}", resource_id);
     
     // 读取 stdout（通常为空，但保留以防万一）
     let stdout_handle = spawn_stream_reader(
@@ -1724,14 +1678,11 @@ async fn extract_audio_from_video(
         false,
     );
     
-    // 读取 stderr 并解析进度（ffmpeg 的进度信息在 stderr 中）
-    // 注意：我们不知道总时长，所以只发送当前时间
+    // 读取 stderr 并发送日志事件（ffmpeg 的进度信息在 stderr 中）
     let stderr_handle = spawn_ffmpeg_progress_reader(
         stderr,
         app.clone(),
         log_event_name,
-        progress_event_name,
-        None, // 暂时不解析总时长
     );
     
     // 等待进程完成
@@ -1825,10 +1776,6 @@ async fn extract_audio_from_video(
     })
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
-    
-    // 发送 100% 进度事件
-    let progress_event_name = format!("extraction-progress-{}", resource_id);
-    let _ = app.emit(&progress_event_name, &100.0);
     
     Ok(output_path.to_string_lossy().to_string())
 }

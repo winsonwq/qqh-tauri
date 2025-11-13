@@ -7,7 +7,7 @@ import { HiArrowLeft } from 'react-icons/hi2';
 import { useAppDispatch, useAppSelector } from '../../redux/hooks';
 import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { appendLog } from '../../redux/slices/transcriptionLogsSlice';
-import { setExtracting, setProgress } from '../../redux/slices/videoExtractionSlice';
+import { setExtracting } from '../../redux/slices/videoExtractionSlice';
 import { useMessage } from '../../componets/Toast';
 import {
   TranscriptionResource,
@@ -17,6 +17,7 @@ import {
   ResourceType,
 } from '../../models';
 import { loadSubtitleFromTasks } from '../../utils/subtitleUtils';
+import { wait } from '../../utils';
 import ResourceInfoCard from './components/ResourceInfoCard';
 import TranscriptionHistory from './components/TranscriptionHistory';
 import LoadingCard from './components/LoadingCard';
@@ -45,7 +46,9 @@ const ResourceDetailPage = () => {
   // 用于跟踪正在设置的 taskId，防止重复设置
   const settingUpTaskIdRef = useRef<string | null>(null);
   // 用于存储提取事件监听器的清理函数
-  const extractionUnlistenRef = useRef<{ log?: UnlistenFn; progress?: UnlistenFn }>({});
+  const extractionUnlistenRef = useRef<{ log?: UnlistenFn }>({});
+  // 用于跟踪是否已经触发过音频提取，避免重复触发
+  const extractionTriggeredRef = useRef<Set<string>>(new Set());
 
   // 从 currentPage 中提取 resourceId（格式：resource:${resourceId}）
   const resourceId = currentPage?.startsWith('resource:') ? currentPage.replace('resource:', '') : null;
@@ -94,7 +97,7 @@ const ResourceDetailPage = () => {
     if (isSettingUpRef.current && settingUpTaskIdRef.current !== taskId) {
       console.log('正在为其他任务设置监听器，等待完成:', settingUpTaskIdRef.current);
       // 等待一小段时间后重试
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await wait(100);
       // 重试前再次检查
       if (unlistenRef.current.taskId === taskId) {
         return;
@@ -180,16 +183,6 @@ const ResourceDetailPage = () => {
     }
   }, [cleanupEventListeners, dispatch]);
 
-  useEffect(() => {
-    // 当 resourceId 变化时，清理所有旧的监听器
-    cleanupEventListeners();
-    cleanupExtractionListeners();
-    
-    if (resourceId) {
-      loadResourceAndTasks();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resourceId]);
 
   // 当任务列表加载完成后，检查是否有运行中的任务并设置监听器
   // 注意：这个 useEffect 主要负责清理非运行中任务的监听器
@@ -323,14 +316,6 @@ const ResourceDetailPage = () => {
       }
       extractionUnlistenRef.current.log = undefined;
     }
-    if (extractionUnlistenRef.current.progress) {
-      try {
-        extractionUnlistenRef.current.progress();
-      } catch (err) {
-        console.error('清理提取进度监听器失败:', err);
-      }
-      extractionUnlistenRef.current.progress = undefined;
-    }
   }, []);
 
   // 设置提取事件监听器
@@ -338,7 +323,6 @@ const ResourceDetailPage = () => {
     cleanupExtractionListeners();
 
     const logEventName = `extraction-log-${resourceId}`;
-    const progressEventName = `extraction-progress-${resourceId}`;
 
     try {
       // 监听提取日志
@@ -346,70 +330,29 @@ const ResourceDetailPage = () => {
         console.log('提取日志:', event.payload);
       });
       extractionUnlistenRef.current.log = unlistenLog;
-
-      // 监听提取进度
-      const unlistenProgress = await listen<number>(progressEventName, (event) => {
-        console.log('提取进度:', event.payload);
-        dispatch(setProgress({ resourceId, progress: event.payload }));
-      });
-      extractionUnlistenRef.current.progress = unlistenProgress;
     } catch (err) {
       console.error('设置提取监听器失败:', err);
     }
-  }, [cleanupExtractionListeners, dispatch]);
+  }, [cleanupExtractionListeners]);
 
-  // 初始化加载：同时加载资源和任务，完成后处理字幕
-  const loadResourceAndTasks = async () => {
-    if (!resourceId) return;
-    
-    try {
-      // 并行加载资源和任务
-      const [resources, tasksResult] = await Promise.all([
-        invoke<TranscriptionResource[]>('get_transcription_resources'),
-        invoke<TranscriptionTask[]>('get_transcription_tasks', { resourceId }),
-      ]);
-      
-      // 处理资源
-      const found = resources.find((r) => r.id === resourceId);
-      if (found) {
-        setResource(found);
-        await initializeResource(found);
-      }
-      
-      // 处理任务
-      initializeTasks(tasksResult);
-      
-      // 加载字幕（仅在视频资源时，此时 resource 和 tasks 都已加载完成）
-      await initializeSubtitle(found, tasksResult);
-    } catch (err) {
-      console.error('加载资源和任务失败:', err);
-      message.error(err instanceof Error ? err.message : '加载失败');
-      setAudioSrc(null);
-      setVideoSrc(null);
-    }
-  };
-
-  // 加载资源信息（用于重新加载，比如音频提取后）
-  const loadResource = async () => {
-    if (!resourceId) return;
+  // 加载资源数据（仅从数据库加载，不触发初始化）
+  const loadResourceData = useCallback(async () => {
+    if (!resourceId) return null;
     try {
       const resources = await invoke<TranscriptionResource[]>('get_transcription_resources');
       const found = resources.find((r) => r.id === resourceId);
-
       if (found) {
         setResource(found);
-        // 复用初始化函数
-        await initializeResource(found);
       }
+      return found || null;
     } catch (err) {
       console.error('加载资源失败:', err);
       message.error(err instanceof Error ? err.message : '加载资源失败');
-      setAudioSrc(null);
-      setVideoSrc(null);
+      return null;
     }
-  };
+  }, [resourceId, message]);
 
-  // 初始化资源：设置播放源、音频提取等
+  // 初始化资源：仅设置播放源，不处理音频提取
   const initializeResource = useCallback(async (found: TranscriptionResource) => {
     if (!resourceId) return;
     
@@ -435,8 +378,6 @@ const ResourceDetailPage = () => {
       // 视频资源：显示视频文件
       try {
         const videoPath = convertFileSrc(found.file_path);
-        console.log('视频原始路径:', found.file_path);
-        console.log('视频转换后路径:', videoPath);
         setVideoSrc(videoPath);
         setAudioSrc(null);
       } catch (err) {
@@ -445,53 +386,14 @@ const ResourceDetailPage = () => {
         setVideoSrc(null);
       }
 
-      // 设置提取事件监听器
-      await setupExtractionListeners(resourceId);
-
-      // 检查是否需要提取音频
-      if (!found.extracted_audio_path) {
-        // 自动触发音频提取
-        dispatch(setExtracting({ resourceId, isExtracting: true }));
-        dispatch(setProgress({ resourceId, progress: 0 }));
-        
-        invoke<string>('extract_audio_from_video', { resourceId })
-          .then((result) => {
-            console.log('音频提取成功:', result);
-            dispatch(setExtracting({ resourceId, isExtracting: false }));
-            dispatch(setProgress({ resourceId, progress: 100 }));
-            // 重新加载资源以获取提取的音频路径
-            setTimeout(() => {
-              loadResource().catch((err) => {
-                console.error('重新加载资源失败:', err);
-              });
-            }, 500);
-          })
-          .catch((err) => {
-            console.error('音频提取失败:', err);
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            if (errorMessage.includes('音频已提取') || errorMessage.includes('正在进行中')) {
-              console.log('音频提取状态:', errorMessage);
-              dispatch(setExtracting({ resourceId, isExtracting: false }));
-              dispatch(setProgress({ resourceId, progress: 100 }));
-              setTimeout(() => {
-                loadResource().catch((loadErr) => {
-                  console.error('重新加载资源失败:', loadErr);
-                });
-              }, 500);
-            } else {
-              message.error(errorMessage || '音频提取失败');
-              dispatch(setExtracting({ resourceId, isExtracting: false }));
-            }
-          });
-      } else {
-        // 如果已有提取的音频路径，检查文件是否存在
+      // 如果已有提取的音频路径，检查文件是否存在并设置音频源
+      if (found.extracted_audio_path) {
         try {
           const audioExists = await exists(found.extracted_audio_path);
           if (audioExists) {
             try {
               const audioPath = convertFileSrc(found.extracted_audio_path);
               setAudioSrc(audioPath);
-              console.log('提取的音频文件已加载:', audioPath);
             } catch (convertErr) {
               console.error('转换提取的音频路径失败:', convertErr);
             }
@@ -506,8 +408,6 @@ const ResourceDetailPage = () => {
       // 音频资源：显示音频文件
       try {
         const audioPath = convertFileSrc(found.file_path);
-        console.log('音频原始路径:', found.file_path);
-        console.log('音频转换后路径:', audioPath);
         setAudioSrc(audioPath);
         setVideoSrc(null);
       } catch (err) {
@@ -516,7 +416,7 @@ const ResourceDetailPage = () => {
         setAudioSrc(null);
       }
     }
-  }, [resourceId, dispatch, setupExtractionListeners]);
+  }, [resourceId, message]);
 
   // 初始化任务：选择任务
   const initializeTasks = useCallback((tasksResult: TranscriptionTask[]) => {
@@ -552,6 +452,37 @@ const ResourceDetailPage = () => {
       setSubtitleUrl(newSubtitleUrl);
     }
   }, [resourceId]);
+
+  // 初始化加载：同时加载资源和任务，完成后处理字幕
+  const loadResourceAndTasks = useCallback(async () => {
+    if (!resourceId) return;
+    
+    try {
+      // 并行加载资源和任务
+      const [resources, tasksResult] = await Promise.all([
+        invoke<TranscriptionResource[]>('get_transcription_resources'),
+        invoke<TranscriptionTask[]>('get_transcription_tasks', { resourceId }),
+      ]);
+      
+      // 处理资源
+      const found = resources.find((r) => r.id === resourceId);
+      if (found) {
+        setResource(found);
+        await initializeResource(found);
+      }
+      
+      // 处理任务
+      initializeTasks(tasksResult);
+      
+      // 加载字幕（仅在视频资源时，此时 resource 和 tasks 都已加载完成）
+      await initializeSubtitle(found, tasksResult);
+    } catch (err) {
+      console.error('加载资源和任务失败:', err);
+      message.error(err instanceof Error ? err.message : '加载失败');
+      setAudioSrc(null);
+      setVideoSrc(null);
+    }
+  }, [resourceId, initializeResource, initializeTasks, initializeSubtitle, message]);
 
   // 加载转写任务列表
   const loadTasks = async (autoSwitchToRunning = true) => {
@@ -695,6 +626,104 @@ const ResourceDetailPage = () => {
       cleanupExtractionListeners();
     };
   }, [cleanupExtractionListeners]);
+
+  // Effect：当 resourceId 变化时，加载资源和任务
+  useEffect(() => {
+    // 当 resourceId 变化时，清理所有旧的监听器
+    cleanupEventListeners();
+    cleanupExtractionListeners();
+    // 清除提取触发标记
+    extractionTriggeredRef.current.clear();
+    
+    if (resourceId) {
+      loadResourceAndTasks();
+    }
+  }, [resourceId, loadResourceAndTasks, cleanupEventListeners, cleanupExtractionListeners]);
+
+  // 使用 useMemo 稳定资源的关键属性，避免不必要的 effect 触发
+  const resourceExtractionKey = useMemo(() => {
+    if (!resource) return null;
+    return `${resource.id}:${resource.resource_type}:${resource.extracted_audio_path || 'none'}`;
+  }, [resource?.id, resource?.resource_type, resource?.extracted_audio_path]);
+
+  // Effect：当资源加载完成且需要提取音频时，触发提取
+  // 只依赖 resourceExtractionKey，避免重复触发
+  useEffect(() => {
+    if (!resourceId || !resource || !resourceExtractionKey) return;
+    
+    // 只处理视频资源且没有提取音频的情况
+    // 使用 resourceExtractionKey 来判断，避免直接依赖 resource 对象
+    // resourceExtractionKey 格式: "id:video:none" 或 "id:video:/path/to/audio.wav"
+    const isVideoWithoutAudio = resourceExtractionKey.includes(':video:') && resourceExtractionKey.endsWith(':none');
+    
+    if (isVideoWithoutAudio) {
+      // 检查是否已经触发过提取（使用 ref 避免重复触发）
+      if (extractionTriggeredRef.current.has(resourceId)) {
+        return; // 已经触发过，直接返回
+      }
+
+      // 检查是否已经在提取中
+      const isAlreadyExtracting = videoExtraction.extractions[resourceId]?.isExtracting ?? false;
+      if (isAlreadyExtracting) {
+        extractionTriggeredRef.current.add(resourceId);
+        return;
+      }
+
+      // 标记为已触发（在调用之前就标记，避免并发）
+      extractionTriggeredRef.current.add(resourceId);
+
+      // 直接在这里执行提取逻辑，避免依赖 handleAudioExtraction 导致重复触发
+      (async () => {
+        try {
+          // 设置提取事件监听器
+          await setupExtractionListeners(resourceId);
+
+          // 显示提示消息并触发提取
+          message.info('检测到视频资源，正在自动提取音频...');
+          dispatch(setExtracting({ resourceId, isExtracting: true }));
+          
+          const result = await invoke<string>('extract_audio_from_video', { resourceId });
+          
+          // 如果返回的是"正在进行中"，不显示成功消息
+          if (!result.includes('正在进行中')) {
+            message.success('音频提取完成');
+          }
+          dispatch(setExtracting({ resourceId, isExtracting: false }));
+          
+          // 重新加载资源数据
+          setTimeout(() => {
+            loadResourceData().then((updatedResource) => {
+              if (updatedResource) {
+                // 重新初始化资源以更新播放源
+                initializeResource(updatedResource);
+              }
+            });
+          }, 500);
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          if (errorMessage.includes('音频已提取') || errorMessage.includes('正在进行中')) {
+            dispatch(setExtracting({ resourceId, isExtracting: false }));
+            setTimeout(() => {
+              loadResourceData().then((updatedResource) => {
+                if (updatedResource) {
+                  initializeResource(updatedResource);
+                }
+              });
+            }, 500);
+          } else {
+            message.error(errorMessage || '音频提取失败');
+            dispatch(setExtracting({ resourceId, isExtracting: false }));
+            // 提取失败时，清除触发标记，允许重试
+            extractionTriggeredRef.current.delete(resourceId);
+          }
+        }
+      })();
+    } else {
+      // 如果已经有提取的音频，清除触发标记（允许重新加载时重新触发）
+      extractionTriggeredRef.current.delete(resourceId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resourceId, resourceExtractionKey]); // 只依赖 resourceExtractionKey，避免重复触发
 
   // 计算 canCreateTask，必须在所有早期返回之前
   const canCreateTask = useMemo(() => {

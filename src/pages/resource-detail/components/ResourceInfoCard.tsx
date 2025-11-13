@@ -56,8 +56,9 @@ const ResourceInfoCard = memo(({
               />
               {/* 提取进度显示 */}
               {isExtracting && (
-                <div className="text-xs text-base-content/70">
-                  正在提取音频...
+                <div className="flex items-center gap-2 text-sm text-base-content/70">
+                  <span className="loading loading-spinner loading-sm"></span>
+                  <span>正在提取音频...</span>
                 </div>
               )}
             </div>
