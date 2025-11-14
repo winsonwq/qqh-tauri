@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { AIConfig } from '../../models'
-import Dropdown from '../Dropdown'
+import Select, { SelectOption } from '../Select'
 
 interface AIConfigSelectorProps {
   selectedConfigId?: string
@@ -66,22 +66,13 @@ const AIConfigSelector = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 获取当前选中的配置
-  const selectedConfig = useMemo(
-    () => configs.find((config) => config.id === selectedConfigId),
-    [configs, selectedConfigId],
-  )
-
-  // 计算 summary 显示的文本
-  const summaryText = useMemo(() => {
-    if (loadingConfigs) {
-      return '加载中...'
-    }
-    if (selectedConfig) {
-      return `${selectedConfig.name} (${selectedConfig.model})`
-    }
-    return '选择 AI 配置'
-  }, [loadingConfigs, selectedConfig])
+  // 将 AIConfig[] 转换为 SelectOption[]
+  const selectOptions = useMemo<SelectOption[]>(() => {
+    return configs.map((config) => ({
+      value: config.id,
+      label: `${config.name} (${config.model})`,
+    }))
+  }, [configs])
 
   const handleConfigSelect = (configId: string) => {
     if (externalSelectedConfigId === undefined) {
@@ -97,24 +88,14 @@ const AIConfigSelector = ({
   }
 
   return (
-    <Dropdown
-      selectedId={selectedConfigId}
-      options={configs}
-      onSelect={handleConfigSelect}
-      summary={
-        <span title={summaryText} className="truncate">
-          {summaryText}
-        </span>
-      }
-      renderOption={(config, _isSelected) => (
-        <>
-          <div className="font-medium truncate">{config.name}</div>
-          <div className="text-xs opacity-70 truncate">{config.model}</div>
-        </>
-      )}
-      position="top"
-      loading={loadingConfigs}
-      summaryClassName="btn btn-xs text-xs max-w-[120px] truncate"
+    <Select
+      value={selectedConfigId}
+      options={selectOptions}
+      onChange={handleConfigSelect}
+      placeholder={loadingConfigs ? '加载中...' : '选择 AI 配置'}
+      disabled={loadingConfigs}
+      size="xs"
+      className="max-w-[120px]"
     />
   )
 }

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { HiPlus, HiClock } from 'react-icons/hi2'
+import { HiPlus, HiClock, HiChevronRight } from 'react-icons/hi2'
 import { FaMagic } from 'react-icons/fa'
 import AIMessageInput from './AIMessageInput'
 import { ToolCall } from './ToolCallConfirmModal'
@@ -79,6 +79,7 @@ interface MessageItemProps {
 
 const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCancel }: MessageItemProps) => {
   const [showReasoning, setShowReasoning] = useState(true)
+  const [viewingToolCall, setViewingToolCall] = useState<ToolCall | null>(null)
   
   return (
     <div
@@ -99,7 +100,7 @@ const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCa
                 </div>
               ) : null}
               <button
-                className="btn btn-ghost btn-xs text-left text-xs text-base-content/70 hover:text-base-content mt-2 p-0 h-auto min-h-0"
+                className="btn btn-ghost btn-xs text-left text-xs text-base-content/70 hover:text-base-content mt-2 p-0 h-auto min-h-0 p-1"
                 onClick={() => setShowReasoning(!showReasoning)}
               >
                 {showReasoning ? '收起' : '展开'}
@@ -114,22 +115,20 @@ const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCa
         {/* 显示待确认的工具调用 */}
         {message.pendingToolCalls && message.pendingToolCalls.length > 0 && (
           <div className="mt-3 p-3 bg-warning/10 rounded-lg border border-warning/20">
-            <div className="text-sm font-semibold text-warning mb-2">需要确认工具调用</div>
-            <div className="space-y-2 mb-3">
+            <div className="space-y-1 mb-3">
               {message.pendingToolCalls.map((toolCall, index) => {
-                let args: any = {}
-                try {
-                  args = JSON.parse(toolCall.function.arguments)
-                } catch {
-                  args = {}
-                }
                 return (
-                  <div key={index} className="bg-base-200 rounded p-2">
-                    <div className="font-medium text-sm">{toolCall.function.name}</div>
-                    <div className="text-xs text-base-content/70 mt-1 break-words">
-                      <pre className="whitespace-pre-wrap break-words">{JSON.stringify(args, null, 2)}</pre>
-                    </div>
-                  </div>
+                  <button
+                    key={index}
+                    className="w-full flex items-center justify-between bg-base-100 cursor-pointer rounded p-2 hover:bg-base-200 transition-colors text-left"
+                    onClick={() => setViewingToolCall(toolCall)}
+                  >
+                    <span className="font-medium text-sm text-base-content space-x-2">
+                      <span className="text-warning">工具调用</span>
+                      <span className='text-base-content'>{toolCall.function.name}</span>
+                    </span>
+                    <HiChevronRight className="h-4 w-4 text-base-content/50 flex-shrink-0" />
+                  </button>
                 )
               })}
             </div>
@@ -153,25 +152,59 @@ const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCa
         {/* 显示已完成的工具调用 */}
         {message.tool_calls && message.tool_calls.length > 0 && !message.pendingToolCalls && (
           <div className="mt-3 p-3 bg-info/10 rounded-lg border border-info/20">
-            <div className="text-sm font-semibold text-info mb-2">工具调用</div>
-            <div className="space-y-2">
+            <div className="space-y-1">
               {message.tool_calls.map((toolCall, index) => {
-                let args: any = {}
-                try {
-                  args = JSON.parse(toolCall.function.arguments)
-                } catch {
-                  args = {}
-                }
                 return (
-                  <div key={index} className="bg-base-200 rounded p-2">
-                    <div className="font-medium text-sm">{toolCall.function.name}</div>
-                    <div className="text-xs text-base-content/70 mt-1 break-words">
-                      <pre className="whitespace-pre-wrap break-words">{JSON.stringify(args, null, 2)}</pre>
-                    </div>
-                  </div>
+                  <button
+                    key={index}
+                    className="w-full flex items-center justify-between bg-base-100 cursor-pointer rounded p-2 hover:bg-base-200 transition-colors text-left"
+                    onClick={() => setViewingToolCall(toolCall)}
+                  >
+                    <span className="font-medium text-sm text-base-content space-x-2">
+                      <span className="text-info">工具调用</span>
+                      <span className='text-base-content'>{toolCall.function.name}</span>
+                    </span>
+                    <HiChevronRight className="h-4 w-4 text-base-content/50 flex-shrink-0" />
+                  </button>
                 )
               })}
             </div>
+          </div>
+        )}
+        
+        {/* 工具调用详情 Modal */}
+        {viewingToolCall && (
+          <div className="modal modal-open">
+            <div className="modal-box">
+              <h3 className="font-bold text-lg mb-4">工具调用详情</h3>
+              <div className="space-y-3">
+                <div>
+                  <div className="text-sm font-semibold text-base-content/70 mb-1">工具名称</div>
+                  <div className="text-sm font-medium">{viewingToolCall.function.name}</div>
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-base-content/70 mb-1">参数</div>
+                  <div className="bg-base-200 rounded-lg p-3">
+                    <pre className="text-xs text-base-content/80 whitespace-pre-wrap break-words">
+                      {(() => {
+                        try {
+                          const args = JSON.parse(viewingToolCall.function.arguments)
+                          return JSON.stringify(args, null, 2)
+                        } catch {
+                          return viewingToolCall.function.arguments
+                        }
+                      })()}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-action">
+                <button className="btn" onClick={() => setViewingToolCall(null)}>
+                  关闭
+                </button>
+              </div>
+            </div>
+            <div className="modal-backdrop" onClick={() => setViewingToolCall(null)}></div>
           </div>
         )}
         

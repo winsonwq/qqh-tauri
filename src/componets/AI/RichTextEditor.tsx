@@ -5,7 +5,7 @@ import { ContentEditable } from '@lexical/react/LexicalContentEditable'
 import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin'
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin'
 import { $getRoot, EditorState, LexicalEditor } from 'lexical'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react'
 import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary'
 import { TagNode } from './TagNode'
 import { MentionPlugin, MentionOption } from './MentionPlugin'
@@ -19,6 +19,10 @@ interface RichTextEditorProps {
   mentionOptions?: MentionOption[]
   onMentionSearch?: (query: string, trigger: string) => Promise<MentionOption[]>
   triggers?: string[]
+}
+
+export interface RichTextEditorRef {
+  send: () => void
 }
 
 // Autosize 插件
@@ -85,10 +89,43 @@ function Placeholder({ placeholder }: { placeholder?: string }) {
   )
 }
 
+// 发送内容的辅助函数
+const sendContent = (editor: LexicalEditor, onSend?: (content: string) => void) => {
+  if (!onSend) return
+  
+  editor.getEditorState().read(() => {
+    const root = $getRoot()
+    const content = root.getTextContent()
+    if (content.trim()) {
+      onSend(content.trim())
+      // 清空编辑器
+      editor.update(() => {
+        const root = $getRoot()
+        root.clear()
+      })
+    }
+  })
+}
+
 // 编辑器内容组件
-function EditorContent({ placeholder, onSend }: { placeholder?: string; onSend?: (content: string) => void }) {
+function EditorContent({ 
+  placeholder, 
+  onSend,
+  onEditorReady
+}: { 
+  placeholder?: string
+  onSend?: (content: string) => void
+  onEditorReady?: (editor: LexicalEditor) => void
+}) {
   const [editor] = useLexicalComposerContext()
   const contentRef = useRef<HTMLDivElement>(null)
+
+  // 通知父组件编辑器已准备好
+  useEffect(() => {
+    if (onEditorReady) {
+      onEditorReady(editor)
+    }
+  }, [editor, onEditorReady])
 
   // 处理键盘事件
   useEffect(() => {
@@ -97,18 +134,7 @@ function EditorContent({ placeholder, onSend }: { placeholder?: string; onSend?:
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
-        editor.getEditorState().read(() => {
-          const root = $getRoot()
-          const content = root.getTextContent()
-          if (content.trim()) {
-            onSend(content.trim())
-            // 清空编辑器
-            editor.update(() => {
-              const root = $getRoot()
-              root.clear()
-            })
-          }
-        })
+        sendContent(editor, onSend)
       }
     }
 
@@ -146,7 +172,7 @@ function onError(error: Error) {
   // 如果不抛出，Lexical 会尝试优雅恢复
 }
 
-const RichTextEditor = ({
+const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(({
   placeholder = '在这里输入消息，按 Enter 发送...',
   onSend,
   minHeight = 40,
@@ -154,7 +180,7 @@ const RichTextEditor = ({
   mentionOptions = [],
   onMentionSearch,
   triggers = ['#', '@'],
-}: RichTextEditorProps) => {
+}, ref) => {
   const editorRef = useRef<LexicalEditor | null>(null)
 
   const initialConfig = {
@@ -175,11 +201,28 @@ const RichTextEditor = ({
     editorRef.current = editor
   }
 
+  // 暴露发送方法给父组件
+  useImperativeHandle(ref, () => ({
+    send: () => {
+      if (editorRef.current) {
+        sendContent(editorRef.current, onSend)
+      }
+    },
+  }), [onSend])
+
   return (
     <LexicalComposer initialConfig={initialConfig}>
       <div className="rich-text-editor-container" style={{ position: 'relative' }}>
         <RichTextPlugin
-          contentEditable={<EditorContent placeholder={placeholder} onSend={onSend} />}
+          contentEditable={
+            <EditorContent 
+              placeholder={placeholder} 
+              onSend={onSend}
+              onEditorReady={(editor) => {
+                editorRef.current = editor
+              }}
+            />
+          }
           placeholder={null}
           ErrorBoundary={LexicalErrorBoundary}
         />
@@ -194,7 +237,9 @@ const RichTextEditor = ({
       </div>
     </LexicalComposer>
   )
-}
+})
+
+RichTextEditor.displayName = 'RichTextEditor'
 
 export default RichTextEditor
 

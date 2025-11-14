@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   FaPlus,
   FaPaperclip,
@@ -6,7 +6,7 @@ import {
   FaArrowUp,
   FaStop,
 } from 'react-icons/fa'
-import RichTextEditor from './RichTextEditor'
+import RichTextEditor, { RichTextEditorRef } from './RichTextEditor'
 import { MentionOption } from './MentionPlugin'
 import AIConfigSelector from './AIConfigSelector'
 
@@ -27,10 +27,17 @@ const AIMessageInput = ({
   onStop,
 }: AIMessageInputProps) => {
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
+  const editorRef = useRef<RichTextEditorRef>(null)
 
   const handleSend = (content: string) => {
     if (content.trim() && onSend) {
       onSend(content.trim(), selectedConfigId || undefined)
+    }
+  }
+
+  const handleSendButtonClick = () => {
+    if (editorRef.current) {
+      editorRef.current.send()
     }
   }
 
@@ -58,6 +65,7 @@ const AIMessageInput = ({
       {/* 输入框区域 */}
       <div className="relative">
         <RichTextEditor
+          ref={editorRef}
           placeholder={placeholder}
           onSend={handleSend}
           minHeight={40}
@@ -113,16 +121,11 @@ const AIMessageInput = ({
               className="btn btn-error btn-xs btn-circle"
               title="停止生成"
             >
-              <FaStop className="w-4 h-4" />
+              <FaStop className="w-3 h-3" />
             </button>
           ) : (
             <button
-              onClick={() => {
-                // 发送按钮点击时，通过 Enter 键模拟发送
-                // 注意：由于 RichTextEditor 已经处理了 Enter 键发送，
-                // 这个按钮主要用于视觉提示，实际发送通过 Enter 键触发
-                // 如果需要按钮也能发送，需要将编辑器实例通过 ref 暴露出来
-              }}
+              onClick={handleSendButtonClick}
               className="btn btn-primary btn-xs btn-circle"
               title="发送（按 Enter 发送）"
             >

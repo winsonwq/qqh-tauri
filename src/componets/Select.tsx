@@ -297,8 +297,9 @@ const Select = ({
                     } ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                     onClick={() => !isDisabled && handleSelect(option.value)}
                     onMouseEnter={() => !isDisabled && setFocusedIndex(index)}
+                    title={option.label}
                   >
-                    {option.label}
+                    <span className="truncate block">{option.label}</span>
                   </li>
                 )
               })}

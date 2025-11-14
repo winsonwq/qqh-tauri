@@ -47,6 +47,7 @@ const Dropdown = <T extends string | number = string>({
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLDivElement>(null)
+  const isSelectingRef = useRef(false) // 标记是否正在选中选项
 
   // 获取选中的选项
   const selectedOption = selectedId
@@ -81,12 +82,18 @@ const Dropdown = <T extends string | number = string>({
   }, [isOpen])
 
   const handleSelect = (id: T) => {
+    // 标记正在选中，避免 blur 事件干扰
+    isSelectingRef.current = true
     onSelect(id)
     setIsOpen(false)
     // 移除焦点以关闭下拉菜单
     if (buttonRef.current) {
       buttonRef.current.blur()
     }
+    // 重置标记，使用 setTimeout 确保在 blur 事件之后
+    setTimeout(() => {
+      isSelectingRef.current = false
+    }, 0)
   }
 
   const handleButtonClick = (e: React.MouseEvent) => {
@@ -102,6 +109,10 @@ const Dropdown = <T extends string | number = string>({
   }
 
   const handleButtonBlur = (e: React.FocusEvent) => {
+    // 如果是因为选中选项而关闭的，不执行延迟关闭逻辑
+    if (isSelectingRef.current) {
+      return
+    }
     // 如果焦点移到了下拉内容内部，不要关闭
     if (
       dropdownRef.current &&
@@ -118,7 +129,7 @@ const Dropdown = <T extends string | number = string>({
   return (
     <div
       ref={dropdownRef}
-      className={`dropdown dropdown-${position} ${className}`}
+      className={`dropdown dropdown-${position} ${isOpen ? 'dropdown-open' : ''} ${className}`}
     >
       <div
         ref={buttonRef}
