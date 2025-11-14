@@ -7,6 +7,7 @@ import { HiPlus, HiClock, HiChevronRight } from 'react-icons/hi2'
 import { FaMagic } from 'react-icons/fa'
 import AIMessageInput from './AIMessageInput'
 import { ToolCall } from './ToolCallConfirmModal'
+import ToolResultDisplay, { parseToolResultContent } from './ToolResultDisplay'
 import { markdownComponents } from './MarkdownComponents'
 import { MCPServerInfo, MCPTool, Chat, ChatListItem, Message as ChatMessage } from '../../models'
 import { useMessage } from '../Toast'
@@ -32,12 +33,13 @@ interface AIMessage {
 }
 
 // 渲染消息内容
-const renderMessageContent = (content: string) => {
+const renderMessageContent = (content: string, showCursor?: boolean) => {
   return (
     <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {content}
       </ReactMarkdown>
+      {showCursor && <span className="ai-cursor" />}
     </div>
   )
 }
@@ -80,11 +82,16 @@ interface MessageItemProps {
   onRef: (element: HTMLDivElement | null) => void
   onToolCallConfirm?: (toolCalls: ToolCall[]) => void
   onToolCallCancel?: (messageId: string) => void
+  isStreaming?: boolean
+  isLastAssistantMessage?: boolean
 }
 
-const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCancel }: MessageItemProps) => {
+const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCancel, isStreaming, isLastAssistantMessage }: MessageItemProps) => {
   const [showReasoning, setShowReasoning] = useState(true)
   const [viewingToolCall, setViewingToolCall] = useState<ToolCall | null>(null)
+  
+  // 判断是否应该显示光标：是最后一个 assistant 消息，正在流式输出，且不是 tool 消息
+  const shouldShowCursor = message.role === 'assistant' && isLastAssistantMessage && isStreaming
   
   return (
     <div
@@ -115,7 +122,28 @@ const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCa
         )}
         
         {/* 显示主要内容 */}
-        {message.content && renderMessageContent(message.content)}
+        {message.content && (
+          message.role === 'tool' ? (
+            <div className="mt-2">
+              {message.name && (
+                <div className="text-xs font-semibold text-base-content/70 mb-2">
+                  工具: {message.name}
+                </div>
+              )}
+              <div className="bg-base-200 rounded-lg p-3 border border-base-300">
+                <ToolResultDisplay items={parseToolResultContent(message.content)} />
+              </div>
+            </div>
+          ) : (
+            renderMessageContent(message.content, shouldShowCursor)
+          )
+        )}
+        {/* 如果没有内容但正在流式输出，也显示光标 */}
+        {!message.content && shouldShowCursor && (
+          <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
+            <span className="ai-cursor" />
+          </div>
+        )}
         
         {/* 显示待确认的工具调用 */}
         {message.pendingToolCalls && message.pendingToolCalls.length > 0 && (
@@ -679,28 +707,27 @@ const AIPanel = () => {
       }
     }
 
-    // 使用函数式更新来获取最新的消息列表，并计算更新后的消息
+    // 更新消息列表
     let updatedMessages: AIMessage[] = []
     setMessages((prev) => {
       updatedMessages = [...prev, ...toolResults]
-      
-      // 保存工具结果消息到数据库
-      for (const toolResult of toolResults) {
-        invoke('save_message', {
-          chatId,
-          role: 'tool',
-          content: toolResult.content,
-          toolCalls: null,
-          toolCallId: toolResult.tool_call_id || null,
-          name: toolResult.name || null,
-          reasoning: null,
-        }).catch((err) => {
-          console.error('保存工具结果消息失败:', err)
-        })
-      }
-
       return updatedMessages
     })
+    
+    // 保存工具结果消息到数据库（在 setMessages 回调外部，避免重复保存）
+    for (const toolResult of toolResults) {
+      invoke('save_message', {
+        chatId,
+        role: 'tool',
+        content: toolResult.content,
+        toolCalls: null,
+        toolCallId: toolResult.tool_call_id || null,
+        name: toolResult.name || null,
+        reasoning: null,
+      }).catch((err) => {
+        console.error('保存工具结果消息失败:', err)
+      })
+    }
 
     // 继续对话（使用更新后的消息列表，在 setMessages 回调外部调用，避免重复请求）
     const chatMessages = updatedMessages
@@ -1018,9 +1045,17 @@ const AIPanel = () => {
           </div>
         ) : (
           <div className="space-y-0">
-            {messages.map((message) => {
+            {messages.map((message, index) => {
               const isSticky =
                 message.role === 'user' && stickyMessageId === message.id
+              
+              // 找到最后一个 assistant 消息
+              const lastAssistantIndex = messages
+                .map((m, i) => ({ role: m.role, index: i }))
+                .filter((m) => m.role === 'assistant')
+                .pop()?.index ?? -1
+              
+              const isLastAssistantMessage = index === lastAssistantIndex
 
               return (
                 <MessageItem
@@ -1030,6 +1065,8 @@ const AIPanel = () => {
                   onRef={(el) => setMessageRef(message.id, el)}
                   onToolCallConfirm={handleToolCallConfirm}
                   onToolCallCancel={handleToolCallCancel}
+                  isStreaming={isStreaming}
+                  isLastAssistantMessage={isLastAssistantMessage}
                 />
               )
             })}

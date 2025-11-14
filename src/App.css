@@ -15,3 +15,24 @@ body,
 .plyr {
   border-radius: 0.5rem;
 }
+
+/* AI 回答闪烁光标动画 */
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+.ai-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background-color: currentColor;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  vertical-align: baseline;
+  position: relative;
+}
