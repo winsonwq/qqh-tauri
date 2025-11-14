@@ -80,28 +80,6 @@ const AIMessageInput = ({
       <div className="flex items-center justify-between px-2 pb-2">
         {/* 左侧图标组 */}
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => handleIconClick('add')}
-            className="btn btn-ghost btn-xs btn-square"
-            title="添加"
-          >
-            <FaPlus className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => handleIconClick('attach')}
-            className="btn btn-ghost btn-xs btn-square"
-            title="附件"
-          >
-            <FaPaperclip className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => handleIconClick('search')}
-            className="btn btn-ghost btn-xs btn-square"
-            title="搜索"
-          >
-            <FaSearch className="w-4 h-4" />
-          </button>
-
           {/* AI 配置选择器 */}
           <AIConfigSelector
             selectedConfigId={selectedConfigId}

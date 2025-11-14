@@ -10,13 +10,18 @@
 
 .rich-text-editor-content {
   width: 100%;
-  min-height: 40px;
   padding: 12px;
   font-size: 14px;
   line-height: 1.5;
   color: inherit;
   word-wrap: break-word;
   white-space: pre-wrap;
+  box-sizing: border-box;
+  /* 默认值，会被 JavaScript 动态覆盖 */
+  min-height: 40px;
+  max-height: 200px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .rich-text-editor-placeholder {
