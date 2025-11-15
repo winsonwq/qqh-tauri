@@ -4,4 +4,5 @@ export type {
   UseCommandExecutionOptions,
   UseCommandExecutionReturn,
 } from './useCommandExecution';
+export { useStateWithRef } from './useStateWithRef';
 

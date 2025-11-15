@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useStateWithRef } from '../../hooks'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import ReactMarkdown from 'react-markdown'
@@ -250,7 +251,7 @@ const MessageItem = ({ message, isSticky, onRef, onToolCallConfirm, onToolCallCa
 
 const AIPanel = () => {
   const message = useMessage()
-  const [messages, setMessages] = useState<AIMessage[]>([])
+  const [messages, updateMessages, messagesRef] = useStateWithRef<AIMessage[]>([])
   const [stickyMessageId, setStickyMessageId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -395,7 +396,7 @@ const AIPanel = () => {
     try {
       const newChat = await invoke<Chat>('create_chat', { title: '' })
       setCurrentChat(newChat)
-      setMessages([])
+      updateMessages([])
       await loadChatList()
     } catch (err) {
       console.error('创建 chat 失败:', err)
@@ -440,7 +441,7 @@ const AIPanel = () => {
         }
       })
       
-      setMessages(convertedMessages)
+      updateMessages(convertedMessages)
       setShowHistoryDropdown(false)
     } catch (err) {
       console.error('切换 chat 失败:', err)
@@ -490,7 +491,7 @@ const AIPanel = () => {
                   }
                 })
                 
-                setMessages(convertedMessages)
+                updateMessages(convertedMessages)
               }
             } catch (err) {
               console.error('加载 chat 失败:', err)
@@ -498,7 +499,7 @@ const AIPanel = () => {
               try {
                 const newChat = await invoke<Chat>('create_chat', { title: '' })
                 setCurrentChat(newChat)
-                setMessages([])
+                updateMessages([])
                 const updatedChats = await invoke<ChatListItem[]>('get_all_chats')
                 setChatList(updatedChats)
               } catch (createErr) {
@@ -511,7 +512,7 @@ const AIPanel = () => {
             try {
               const newChat = await invoke<Chat>('create_chat', { title: '' })
               setCurrentChat(newChat)
-              setMessages([])
+              updateMessages([])
             } catch (err) {
               console.error('创建 chat 失败:', err)
               message.error('创建对话失败')
@@ -523,7 +524,7 @@ const AIPanel = () => {
           try {
             const newChat = await invoke<Chat>('create_chat', { title: '' })
             setCurrentChat(newChat)
-            setMessages([])
+            updateMessages([])
           } catch (createErr) {
             console.error('创建 chat 失败:', createErr)
             message.error('创建对话失败')
@@ -602,7 +603,7 @@ const AIPanel = () => {
       content: '',
       timestamp: new Date(),
     }
-    setMessages((prev) => [...prev, assistantMessage])
+    updateMessages((prev) => [...prev, assistantMessage])
     
     let finalContent = ''
     let finalReasoning = ''
@@ -623,7 +624,7 @@ const AIPanel = () => {
       const payload = event.payload
       if (payload.type === 'content' && payload.content) {
         finalContent += payload.content
-        setMessages((prev) =>
+        updateMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMessageId
               ? { ...msg, content: msg.content + payload.content }
@@ -638,7 +639,7 @@ const AIPanel = () => {
         
         if (allDefault) {
           // 默认 MCP 工具直接执行，不显示确认界面
-          setMessages((prev) =>
+          updateMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantMessageId
                 ? { ...msg, tool_calls: payload.tool_calls }
@@ -652,7 +653,7 @@ const AIPanel = () => {
           })
         } else {
           // 非默认 MCP 工具需要用户确认
-          setMessages((prev) =>
+          updateMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantMessageId
                 ? { ...msg, tool_calls: payload.tool_calls, pendingToolCalls: payload.tool_calls }
@@ -663,7 +664,7 @@ const AIPanel = () => {
       } else if (payload.type === 'reasoning' && payload.content) {
         // 处理 reasoning/thinking 内容
         finalReasoning += payload.content
-        setMessages((prev) =>
+        updateMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMessageId
               ? { ...msg, reasoning: (msg.reasoning || '') + payload.content }
@@ -750,13 +751,15 @@ const AIPanel = () => {
     }
 
     // 更新消息列表
-    let updatedMessages: AIMessage[] = []
-    setMessages((prev) => {
-      updatedMessages = [...prev, ...toolResults]
-      return updatedMessages
-    })
+    // 使用 ref 获取最新的消息状态，避免异步状态更新的时序问题
+    const currentMessages = messagesRef.current
+    const updatedMessages = [...currentMessages, ...toolResults]
+    console.log('[executeToolCallsAndContinue] 当前消息数量:', currentMessages.length, '工具结果数量:', toolResults.length, '更新后消息数量:', updatedMessages.length)
     
-    // 保存工具结果消息到数据库（在 setMessages 回调外部，避免重复保存）
+    // 更新状态
+    updateMessages(updatedMessages)
+    
+    // 保存工具结果消息到数据库
     for (const toolResult of toolResults) {
       invoke('save_message', {
         chatId,
@@ -771,7 +774,7 @@ const AIPanel = () => {
       })
     }
 
-    // 继续对话（使用更新后的消息列表，在 setMessages 回调外部调用，避免重复请求）
+    // 继续对话（使用更新后的消息列表）
     const chatMessages = updatedMessages
       .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
       .map((m) => ({
@@ -841,7 +844,7 @@ const AIPanel = () => {
       content: messageText,
       timestamp: new Date(),
     }
-    setMessages((prev) => [...prev, userMessage])
+    updateMessages((prev) => [...prev, userMessage])
 
     // 保存用户消息到数据库
     try {
@@ -904,7 +907,7 @@ const AIPanel = () => {
   // 处理工具调用确认
   const handleToolCallConfirm = async (toolCalls: ToolCall[]) => {
     // 找到包含这些 toolCalls 的消息并清除 pendingToolCalls
-    setMessages((prev) =>
+    updateMessages((prev) =>
       prev.map((msg) => {
         // 使用 JSON 字符串比较来匹配 toolCalls
         const msgToolCallsStr = JSON.stringify(msg.pendingToolCalls || [])
@@ -919,7 +922,7 @@ const AIPanel = () => {
   }
 
   const handleToolCallCancel = (messageId: string) => {
-    setMessages((prev) =>
+    updateMessages((prev) =>
       prev.map((msg) =>
         msg.id === messageId
           ? { ...msg, pendingToolCalls: undefined }
