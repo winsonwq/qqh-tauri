@@ -11,6 +11,7 @@ export interface ChatListItem {
   created_at: string
   updated_at: string
   last_message_at: string | null
+  message_count: number
 }
 
 export interface Message {

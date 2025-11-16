@@ -125,6 +125,7 @@ pub struct ChatListItem {
     pub created_at: String,
     pub updated_at: String,
     pub last_message_at: Option<String>,
+    pub message_count: i32,
 }
 
 // MCP HTTP 传输配置
@@ -2796,12 +2797,16 @@ async fn get_all_chats(
             let last_message = db::get_last_message_by_chat(&conn, &chat.id)
                 .map_err(|e| format!("无法获取最后消息: {}", e))?;
             
+            let message_count = db::get_message_count_by_chat(&conn, &chat.id)
+                .map_err(|e| format!("无法获取消息数量: {}", e))?;
+            
             chat_items.push(ChatListItem {
                 id: chat.id,
                 title: chat.title,
                 created_at: chat.created_at,
                 updated_at: chat.updated_at,
                 last_message_at: last_message.map(|m| m.created_at),
+                message_count,
             });
         }
         

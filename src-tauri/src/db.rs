@@ -662,3 +662,15 @@ pub fn get_last_message_by_chat(conn: &Connection, chat_id: &str) -> SqlResult<O
     Ok(None)
 }
 
+pub fn get_message_count_by_chat(conn: &Connection, chat_id: &str) -> SqlResult<i32> {
+    let mut stmt = conn.prepare(
+        "SELECT COUNT(*) FROM messages WHERE chat_id = ?1"
+    )?;
+    
+    let count: i32 = stmt.query_row(params![chat_id], |row| {
+        Ok(row.get(0)?)
+    })?;
+    
+    Ok(count)
+}
+

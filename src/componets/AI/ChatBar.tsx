@@ -37,6 +37,8 @@ export const ChatBar: React.FC<ChatBarProps> = ({
   const [editingTitle, setEditingTitle] = useState('')
   const editingInputRef = useRef<HTMLInputElement | null>(null)
   const [deleteConfirmChatId, setDeleteConfirmChatId] = useState<string | null>(null)
+  const selectedChatItemRef = useRef<HTMLLIElement | null>(null)
+  const listContainerRef = useRef<HTMLUListElement | null>(null)
 
   useEffect(() => {
     if (editingChatId && editingInputRef.current) {
@@ -44,6 +46,19 @@ export const ChatBar: React.FC<ChatBarProps> = ({
       editingInputRef.current.select()
     }
   }, [editingChatId])
+
+  // 当历史记录下拉框打开时，滚动到选中的项
+  useEffect(() => {
+    if (showHistoryDropdown && selectedChatItemRef.current && listContainerRef.current) {
+      // 使用 setTimeout 确保 DOM 已经渲染完成
+      setTimeout(() => {
+        selectedChatItemRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+        })
+      }, 0)
+    }
+  }, [showHistoryDropdown, currentChat?.id])
 
   const startEditing = (chat: ChatListItem) => {
     setEditingChatId(chat.id)
@@ -100,12 +115,27 @@ export const ChatBar: React.FC<ChatBarProps> = ({
             </button>
           </Tooltip>
           {showHistoryDropdown && (
-            <ul className="absolute right-0 top-full mt-1 bg-base-100 rounded-box z-[100] w-72 p-2 shadow-lg border border-base-300 max-h-96 overflow-y-auto">
+            <ul 
+              ref={listContainerRef}
+              className="absolute right-0 top-full mt-1 bg-base-100 rounded-box z-[100] w-72 p-2 shadow-lg border border-base-300 max-h-96 overflow-y-auto"
+            >
               {chatList.length === 0 ? (
                 <li className="px-4 py-2 text-sm text-base-content/50">暂无历史记录</li>
               ) : (
                 chatList.map((chat) => (
-                  <li key={chat.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-base-200 transition-colors">
+                  <li 
+                    key={chat.id}
+                    ref={(el) => {
+                      if (currentChat?.id === chat.id) {
+                        selectedChatItemRef.current = el
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-2 py-1 rounded transition-colors ${
+                      currentChat?.id === chat.id 
+                        ? 'bg-primary/20 border border-primary/30' 
+                        : 'hover:bg-base-200'
+                    }`}
+                  >
                     <div className="flex-1 min-w-0">
                       {editingChatId === chat.id ? (
                         <input
@@ -130,18 +160,32 @@ export const ChatBar: React.FC<ChatBarProps> = ({
                         />
                       ) : (
                         <button
-                          className={`w-full text-left px-2 py-1 rounded transition-colors ${
-                            currentChat?.id === chat.id ? 'bg-base-100 font-semibold' : ''
-                          }`}
+                          className="w-full text-left px-2 py-1 rounded transition-colors"
                           onClick={() => onSwitchChat(chat.id)}
                         >
                           <div className="flex-1 min-w-0">
-                            <div className="font-medium truncate">{chat.title || '新对话'}</div>
-                            {chat.last_message_at && (
-                              <div className="text-xs text-base-content/60">
-                                {formatTime(chat.last_message_at)}
-                              </div>
-                            )}
+                            <div className={`text-sm font-medium truncate ${
+                              currentChat?.id === chat.id ? 'font-semibold' : ''
+                            }`}>
+                              {chat.title || '新对话'}
+                            </div>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              {(chat.last_message_at || chat.created_at) && (
+                                <>
+                                  <div className="text-xs text-base-content/60">
+                                    {formatTime(chat.last_message_at || chat.created_at)}
+                                  </div>
+                                  {chat.message_count > 0 && (
+                                    <span className="text-xs text-base-content/40">·</span>
+                                  )}
+                                </>
+                              )}
+                              {chat.message_count > 0 && (
+                                <div className="text-xs text-base-content/50">
+                                  {chat.message_count} 条消息
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </button>
                       )}
