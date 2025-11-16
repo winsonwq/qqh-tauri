@@ -2,6 +2,7 @@ import { TranscriptionResource } from '../../../models'
 import {
   HiFolder,
   HiClock,
+  HiTrash,
 } from 'react-icons/hi2'
 import Tooltip from '../../../componets/Tooltip'
 import ResourceNameWithIcon from '../../../componets/ResourceNameWithIcon'
@@ -10,14 +11,29 @@ import { formatDateTime } from '../../../utils/format'
 interface ResourceCardProps {
   resource: TranscriptionResource
   onClick: (resourceId: string) => void
+  onDelete?: (resource: TranscriptionResource) => void
 }
 
-const ResourceCard = ({ resource, onClick }: ResourceCardProps) => {
+const ResourceCard = ({ resource, onClick, onDelete }: ResourceCardProps) => {
   return (
     <div
-      className="card card-border bg-base-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+      className="card card-border bg-base-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer relative group"
       onClick={() => onClick(resource.id)}
     >
+      {onDelete && (
+        <button
+          type="button"
+          className="btn btn-xs btn-circle btn-ghost text-error absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 bg-base-100/90 backdrop-blur z-10 transition-opacity"
+          onClick={(event) => {
+            event.stopPropagation()
+            event.preventDefault()
+            onDelete(resource)
+          }}
+          aria-label="删除资源"
+        >
+          <HiTrash className="w-4 h-4" />
+        </button>
+      )}
       <div className="card-body flex flex-col">
         <div className="flex items-start justify-between mb-4">
           <h3

@@ -6,12 +6,17 @@ import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
 import { TranscriptionResource } from '../../models';
 import { HiPlus, HiDocumentText } from 'react-icons/hi2';
 import ResourceCard from './components/ResourceCard';
+import DeleteConfirmModal from '../../componets/DeleteConfirmModal';
+import { useMessage } from '../../componets/Toast';
 
 const HomePage = () => {
   const dispatch = useAppDispatch();
   const [resources, setResources] = useState<TranscriptionResource[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resourceToDelete, setResourceToDelete] = useState<TranscriptionResource | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const message = useMessage();
 
   // 加载转写资源列表
   const loadResources = async () => {
@@ -121,6 +126,23 @@ const HomePage = () => {
     dispatch(setCurrentPage({ feature: 'home', page: `resource:${resourceId}` }));
   };
 
+  // 删除资源
+  const handleDeleteResource = async () => {
+    if (!resourceToDelete || isDeleting) return;
+    try {
+      setIsDeleting(true);
+      await invoke('delete_transcription_resource', { resourceId: resourceToDelete.id });
+      setResources((prev) => prev.filter((item) => item.id !== resourceToDelete.id));
+      message.success('资源已删除');
+    } catch (err) {
+      console.error('删除资源失败:', err);
+      message.error(err instanceof Error ? err.message : '删除资源失败');
+    } finally {
+      setIsDeleting(false);
+      setResourceToDelete(null);
+    }
+  };
+
   return (
     <div className="h-full p-6 space-y-6">
       {/* 操作区域 */}
@@ -166,10 +188,22 @@ const HomePage = () => {
               key={resource.id}
               resource={resource}
               onClick={handleResourceClick}
+              onDelete={setResourceToDelete}
             />
           ))}
         </div>
       )}
+      <DeleteConfirmModal
+        isOpen={!!resourceToDelete}
+        title="删除资源"
+        message="确定要删除这个资源吗？删除后无法恢复，相关的转写任务将保留。"
+        onConfirm={handleDeleteResource}
+        onCancel={() => {
+          if (isDeleting) return;
+          setResourceToDelete(null);
+        }}
+        confirmLoading={isDeleting}
+      />
     </div>
   );
 };

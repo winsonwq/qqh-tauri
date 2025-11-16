@@ -1,9 +1,10 @@
 interface DeleteConfirmModalProps {
-  isOpen: boolean;
-  title: string;
-  message: string;
-  onConfirm: () => void;
-  onCancel: () => void;
+  isOpen: boolean
+  title: string
+  message: string
+  onConfirm: () => void
+  onCancel: () => void
+  confirmLoading?: boolean
 }
 
 const DeleteConfirmModal = ({
@@ -12,6 +13,7 @@ const DeleteConfirmModal = ({
   message,
   onConfirm,
   onCancel,
+  confirmLoading = false,
 }: DeleteConfirmModalProps) => {
   if (!isOpen) return null;
 
@@ -24,7 +26,11 @@ const DeleteConfirmModal = ({
           <button className="btn" onClick={onCancel}>
             取消
           </button>
-          <button className="btn btn-error" onClick={onConfirm}>
+          <button
+            className={`btn btn-error ${confirmLoading ? 'loading' : ''}`}
+            onClick={onConfirm}
+            disabled={confirmLoading}
+          >
             确认删除
           </button>
         </div>
@@ -34,4 +40,3 @@ const DeleteConfirmModal = ({
 };
 
 export default DeleteConfirmModal;
-
