@@ -101,7 +101,7 @@ export function useToolCalls({
       )
 
       // 更新状态
-      updateMessages(updatedMessages)
+      updateMessages(() => updatedMessages)
 
       // 保存工具结果消息到数据库
       for (const toolResult of toolResults) {

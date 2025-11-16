@@ -1,8 +1,5 @@
 import { useState, useRef } from 'react'
 import {
-  FaPlus,
-  FaPaperclip,
-  FaSearch,
   FaArrowUp,
   FaStop,
 } from 'react-icons/fa'
@@ -53,11 +50,6 @@ const AIMessageInput = ({
         opt.label.toLowerCase().includes(query.toLowerCase()) ||
         opt.value.toLowerCase().includes(query.toLowerCase()),
     )
-  }
-
-  const handleIconClick = (iconName: string) => {
-    // TODO: 实现各个图标的功能
-    console.log('点击了图标:', iconName)
   }
 
   return (
