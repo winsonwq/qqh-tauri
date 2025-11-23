@@ -64,7 +64,7 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
 
   if (!config) {
     return (
-      <div className="stream-json-display bg-base-200 rounded-lg p-4 border border-base-300">
+      <div className="stream-json-display">
         <div className="text-sm text-error">配置错误：缺少 config</div>
       </div>
     )
@@ -180,7 +180,7 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
     if (!hasJsonStructure && responseType === 'planner' && content.trim().length > 0) {
       return (
         <div
-          className={`stream-json-display bg-base-200 rounded-lg p-4 border border-base-300 ${
+          className={`stream-json-display ${
             containerClassName || ''
           }`}
         >
@@ -287,7 +287,7 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
 
   return (
     <div
-      className={`stream-json-display bg-base-200 rounded-lg p-3 border border-base-300 space-y-4 ${
+      className={`stream-json-display space-y-4 ${
         containerClassName || ''
       }`}
     >

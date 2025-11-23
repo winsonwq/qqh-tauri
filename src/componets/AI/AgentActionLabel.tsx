@@ -19,7 +19,7 @@ export const AgentActionLabel: React.FC<AgentActionLabelProps> = ({
     : actionDisplayMap[action].past
 
   return (
-    <div className="text-xs text-base-content/60 mb-2">
+    <div className="text-xs text-base-content/40">
       {displayText}
     </div>
   )

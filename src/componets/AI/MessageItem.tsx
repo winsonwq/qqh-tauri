@@ -157,7 +157,7 @@ const renderMessageContent = (
 // 渲染时间戳
 const renderTimestamp = (timestamp: Date) => {
   return (
-    <div className="text-xs mt-2 text-base-content/50">
+    <div className="text-xs text-base-content/40">
       <span>{formatDateTime(timestamp)}</span>
     </div>
   )
@@ -197,11 +197,6 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       style={isSticky ? { top: 0 } : undefined}
     >
       <div className={getMessageContentClasses(message.role)}>
-        {/* 显示行为标签（在消息内容上方） */}
-        {message.role === 'assistant' && messageAction && (
-          <AgentActionLabel action={messageAction} isActive={!!isActionActive} />
-        )}
-
         {/* 显示 reasoning/thinking 内容 */}
         {message.reasoning && (
           <ReasoningSection reasoning={message.reasoning} />
@@ -265,7 +260,13 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           onClose={() => setViewingToolCall(null)}
         />
 
-        {renderTimestamp(message.timestamp)}
+        {/* 行为标签和时间戳放在同一行 */}
+        <div className="flex items-center gap-2 mt-2">
+          {message.role === 'assistant' && messageAction && (
+            <AgentActionLabel action={messageAction} isActive={!!isActionActive} />
+          )}
+          {renderTimestamp(message.timestamp)}
+        </div>
       </div>
     </div>
   )

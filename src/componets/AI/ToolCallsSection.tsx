@@ -24,7 +24,7 @@ export const ToolCallsSection: React.FC<ToolCallsSectionProps> = ({
 
   return (
     <div className={`mt-3 p-3 ${bgColor} rounded-lg border ${borderColor}`}>
-      <div className="space-y-1 mb-3">
+      <div className="space-y-1">
         {toolCalls.map((toolCall, index) => {
           return (
             <button

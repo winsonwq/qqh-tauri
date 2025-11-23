@@ -21,7 +21,7 @@ const TodoList: React.FC<TodoListProps> = ({ todos, title }) => {
   const displayTitle = title || `任务列表 (${todos.length})`
 
   return (
-    <div className="todos-section border border-base-300 rounded-lg p-2 bg-base-100">
+    <div className="todos-section border border-base-300 rounded-lg p-2 bg-base-200">
       <div className="text-xs font-semibold text-base-content/70 mb-2">
         {displayTitle}
       </div>
