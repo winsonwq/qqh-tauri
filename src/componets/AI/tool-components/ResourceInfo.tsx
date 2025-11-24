@@ -2,7 +2,7 @@ import React, { useMemo, useRef } from 'react'
 import { ComponentProps } from '../ComponentRegistry'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import ResourceInfoCard from '../../../pages/resource-detail/components/ResourceInfoCard'
-import { TranscriptionResource, ResourceType, TranscriptionStatus } from '../../../models'
+import { TranscriptionResource, ResourceType } from '../../../models'
 import { PlayerRef } from '../../Player'
 
 interface ResourceInfoProps {
@@ -16,7 +16,7 @@ const ResourceInfo: React.FC<ResourceInfoProps> = ({ props }) => {
     file_path,
     resource_type,
     extracted_audio_path,
-    status,
+    latest_completed_task_id,
     created_at,
     updated_at,
     task_count,
@@ -36,11 +36,11 @@ const ResourceInfo: React.FC<ResourceInfoProps> = ({ props }) => {
       file_path,
       resource_type: resource_type as ResourceType,
       extracted_audio_path,
-      status: (status as TranscriptionStatus) || TranscriptionStatus.PENDING,
+      latest_completed_task_id,
       created_at: created_at || new Date().toISOString(),
       updated_at: updated_at || new Date().toISOString(),
     }
-  }, [id, name, file_path, resource_type, extracted_audio_path, status, created_at, updated_at])
+  }, [id, name, file_path, resource_type, extracted_audio_path, latest_completed_task_id, created_at, updated_at])
 
   // 生成播放 URL
   const audioSrc = useMemo(() => {

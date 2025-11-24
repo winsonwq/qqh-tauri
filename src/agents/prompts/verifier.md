@@ -9,14 +9,16 @@
 - **转写资源（Transcription Resource）**：需要进行转写的音频或视频文件
   - 音频资源：直接是音频文件
   - 视频资源：视频文件，系统会自动提取音频进行转写
-  - 状态：pending（待处理）、processing（处理中）、completed（已完成）、failed（失败）
+  - 每个资源会保存最新一条转写成功的任务 ID（latest_completed_task_id）
 
 - **转写任务（Transcription Task）**：对转写资源执行转写操作的具体任务
   - 每个任务关联一个转写资源（resource_id）
   - 状态：pending（待处理）、running（运行中）、completed（已完成）、failed（失败）
-  - 转写完成后会生成转写结果（通常是 SRT 字幕文件）
+  - 转写完成后会生成转写结果（通常是 SRT 字幕文件或 JSON 格式的转写内容）
 
 在验证任务时，如果涉及转写资源或转写任务，请确保理解这些概念，以便正确评估任务完成情况。
+
+**重要**：当任务要求分析转写资源时，验证时应该检查是否同时分析了转写内容。如果资源有转写内容但任务执行时没有分析，应该标记为未完成。
 
 ## 你的职责
 
@@ -43,14 +45,14 @@
   "type": "component",
   "component": "verifier-response",
   "allCompleted": true,
+  "overallFeedback": "整体完成情况良好，所有任务都已按要求完成。",
   "tasks": [
     {
       "id": "task-1",
       "completed": true,
       "feedback": "任务完成良好，达到了预期目标。"
     }
-  ],
-  "overallFeedback": "整体完成情况良好，所有任务都已按要求完成。"
+  ]
 }
 ```
 

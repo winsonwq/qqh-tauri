@@ -38,7 +38,8 @@ pub struct TranscriptionResource {
     pub resource_type: ResourceType,
     #[serde(default)]
     pub extracted_audio_path: Option<String>, // 提取的音频路径（仅视频资源有）
-    pub status: String, // "pending" | "processing" | "completed" | "failed"
+    #[serde(default)]
+    pub latest_completed_task_id: Option<String>, // 最新一条转写成功的任务 ID
     pub created_at: String,
     pub updated_at: String,
 }
@@ -503,7 +504,7 @@ async fn create_transcription_resource(
         file_path,
         resource_type: resource_type.clone(),
         extracted_audio_path: None,
-        status: "pending".to_string(),
+        latest_completed_task_id: None,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -593,21 +594,6 @@ async fn execute_transcription_task(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 更新资源状态为 processing
-    resource.status = "processing".to_string();
-    resource.updated_at = Utc::now().to_rfc3339();
-    
-    let db_path_clone = db_path.clone();
-    let resource_clone = resource.clone();
-    tokio::task::spawn_blocking(move || {
-        let conn = db::init_database(&db_path_clone)
-            .map_err(|e| format!("无法初始化数据库: {}", e))?;
-        db::update_resource(&conn, &resource_clone)
-            .map_err(|e| format!("无法更新资源: {}", e))
-    })
-    .await
-    .map_err(|e| format!("数据库操作失败: {}", e))??;
-    
     // 检查任务是否已经在运行
     let running_tasks: State<'_, RunningTasks> = app.state();
     if running_tasks.contains(&task_id).await {
@@ -683,19 +669,13 @@ async fn execute_transcription_task(
         task.error = Some(err_msg.clone());
         task.completed_at = Some(Utc::now().to_rfc3339());
         
-        resource.status = "failed".to_string();
-        resource.updated_at = Utc::now().to_rfc3339();
-        
         let db_path_clone = db_path.clone();
         let task_clone = task.clone();
-        let resource_clone = resource.clone();
         tokio::task::spawn_blocking(move || {
             let conn = db::init_database(&db_path_clone)
                 .map_err(|e| format!("无法初始化数据库: {}", e))?;
             db::update_task(&conn, &task_clone)
-                .map_err(|e| format!("无法更新任务: {}", e))?;
-            db::update_resource(&conn, &resource_clone)
-                .map_err(|e| format!("无法更新资源: {}", e))
+                .map_err(|e| format!("无法更新任务: {}", e))
         })
         .await
         .map_err(|e| format!("数据库操作失败: {}", e))??;
@@ -857,19 +837,13 @@ async fn execute_transcription_task(
         task.error = Some(error_msg.clone());
         task.completed_at = Some(Utc::now().to_rfc3339());
         
-        resource.status = "failed".to_string();
-        resource.updated_at = Utc::now().to_rfc3339();
-        
         let db_path_clone = db_path.clone();
         let task_clone = task.clone();
-        let resource_clone = resource.clone();
         tokio::task::spawn_blocking(move || {
             let conn = db::init_database(&db_path_clone)
                 .map_err(|e| format!("无法初始化数据库: {}", e))?;
             db::update_task(&conn, &task_clone)
-                .map_err(|e| format!("无法更新任务: {}", e))?;
-            db::update_resource(&conn, &resource_clone)
-                .map_err(|e| format!("无法更新资源: {}", e))
+                .map_err(|e| format!("无法更新任务: {}", e))
         })
         .await
         .map_err(|e| format!("数据库操作失败: {}", e))??;
@@ -886,19 +860,13 @@ async fn execute_transcription_task(
         task.error = Some(err_msg.clone());
         task.completed_at = Some(Utc::now().to_rfc3339());
         
-        resource.status = "failed".to_string();
-        resource.updated_at = Utc::now().to_rfc3339();
-        
         let db_path_clone = db_path.clone();
         let task_clone = task.clone();
-        let resource_clone = resource.clone();
         tokio::task::spawn_blocking(move || {
             let conn = db::init_database(&db_path_clone)
                 .map_err(|e| format!("无法初始化数据库: {}", e))?;
             db::update_task(&conn, &task_clone)
-                .map_err(|e| format!("无法更新任务: {}", e))?;
-            db::update_resource(&conn, &resource_clone)
-                .map_err(|e| format!("无法更新资源: {}", e))
+                .map_err(|e| format!("无法更新任务: {}", e))
         })
         .await
         .map_err(|e| format!("数据库操作失败: {}", e))??;
@@ -914,8 +882,8 @@ async fn execute_transcription_task(
     task.result = Some(output_file.to_string_lossy().to_string());
     // log 已经在上面保存了
     
-    // 更新资源状态为 completed
-    resource.status = "completed".to_string();
+    // 更新资源的最新转写成功的任务 ID
+    resource.latest_completed_task_id = Some(task_id.clone());
     resource.updated_at = Utc::now().to_rfc3339();
     
     let db_path_clone = db_path.clone();
@@ -1603,21 +1571,6 @@ async fn extract_audio_from_video(
         return Ok("音频提取正在进行中".to_string());
     }
     
-    // 更新资源状态为 processing
-    resource.status = "processing".to_string();
-    resource.updated_at = Utc::now().to_rfc3339();
-    
-    let db_path_clone = db_path.clone();
-    let resource_clone = resource.clone();
-    tokio::task::spawn_blocking(move || {
-        let conn = db::init_database(&db_path_clone)
-            .map_err(|e| format!("无法初始化数据库: {}", e))?;
-        db::update_resource(&conn, &resource_clone)
-            .map_err(|e| format!("无法更新资源: {}", e))
-    })
-    .await
-    .map_err(|e| format!("数据库操作失败: {}", e))??;
-    
     // 获取 ffmpeg 路径
     let ffmpeg_path = get_ffmpeg_path(&app)?;
     
@@ -1724,20 +1677,6 @@ async fn extract_audio_from_video(
         
         eprintln!("音频提取失败: {}", error_msg);
         
-        resource.status = "failed".to_string();
-        resource.updated_at = Utc::now().to_rfc3339();
-        
-        let db_path_clone = db_path.clone();
-        let resource_clone = resource.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = db::init_database(&db_path_clone)
-                .map_err(|e| format!("无法初始化数据库: {}", e))?;
-            db::update_resource(&conn, &resource_clone)
-                .map_err(|e| format!("无法更新资源: {}", e))
-        })
-        .await
-        .map_err(|e| format!("数据库操作失败: {}", e))??;
-        
         return Err(format!("音频提取失败: {}", error_msg));
     }
     
@@ -1746,27 +1685,12 @@ async fn extract_audio_from_video(
         let err_msg = format!("提取完成但未生成输出文件: {}", output_path.display());
         eprintln!("{}", err_msg);
         
-        resource.status = "failed".to_string();
-        resource.updated_at = Utc::now().to_rfc3339();
-        
-        let db_path_clone = db_path.clone();
-        let resource_clone = resource.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = db::init_database(&db_path_clone)
-                .map_err(|e| format!("无法初始化数据库: {}", e))?;
-            db::update_resource(&conn, &resource_clone)
-                .map_err(|e| format!("无法更新资源: {}", e))
-        })
-        .await
-        .map_err(|e| format!("数据库操作失败: {}", e))??;
-        
         return Err(err_msg);
     }
     
     eprintln!("音频提取成功，输出文件: {}", output_path.display());
     
-    // 更新资源状态为 completed，保存提取的音频路径
-    resource.status = "completed".to_string();
+    // 保存提取的音频路径
     resource.extracted_audio_path = Some(output_path.to_string_lossy().to_string());
     resource.updated_at = Utc::now().to_rfc3339();
     

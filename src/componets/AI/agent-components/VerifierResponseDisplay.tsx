@@ -23,15 +23,8 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
 
   // 解析 JSON
   const parsed = useMemo(() => {
-    const jsonMatch = content.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
-      return {
-        data: null as VerifierResponse | null,
-        isValid: false,
-      }
-    }
     try {
-      return parsePartialJson<VerifierResponse>(jsonMatch[0])
+      return parsePartialJson<VerifierResponse>(content)
     } catch (error) {
       console.warn('JSON 解析失败:', error)
       return {

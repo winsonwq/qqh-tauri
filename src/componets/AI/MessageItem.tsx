@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ToolCall } from './ToolCallConfirmModal'
@@ -103,12 +103,9 @@ const findPlannerTodos = (messages: AIMessage[] = []): Todo[] => {
       msg.agentType === 'planner' &&
       msg.content
     ) {
-      const jsonMatch = msg.content.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        const parsed = parsePartialJson<PlannerResponse>(jsonMatch[0])
-        if (parsed?.data?.todos && Array.isArray(parsed.data.todos)) {
-          return parsed.data.todos
-        }
+      const parsed = parsePartialJson<PlannerResponse>(msg.content)
+      if (parsed?.data?.todos && Array.isArray(parsed.data.todos)) {
+        return parsed.data.todos
       }
     }
   }
@@ -120,40 +117,30 @@ const renderMessageContent = (
   content: string,
   showCursor?: boolean,
   messages?: AIMessage[],
+  parsed?: ReturnType<
+    typeof parsePartialJson<{ type?: string; component?: string }>
+  >,
 ) => {
-  // 检查 JSON 中是否有 type: "component" 和 component 属性
-  const jsonMatch = content.match(/\{[\s\S]*\}/)
-  console.log('content------------>', content, jsonMatch)
-  if (jsonMatch) {
-    try {
-      const parsed = parsePartialJson<{ type?: string; component?: string }>(
-        jsonMatch[0],
-      )
-      if (parsed?.data?.type === 'component' && parsed.data.component) {
-        // 直接使用组件名称（JSON 中应使用注册表中的名称）
-        const component = parsed.data.component
+  if (parsed?.data?.type === 'component' && parsed.data.component) {
+    const component = parsed.data.component
 
-        // 准备组件 props
-        const props: any = { content }
+    // 准备组件 props
+    const props: any = { content }
 
-        // Verifier 需要 planner 的 todos
-        if (component === 'verifier-response' && messages) {
-          const plannerTodos = findPlannerTodos(messages)
-          if (plannerTodos.length > 0) {
-            props.config = { plannerTodos }
-          }
-        }
-
-        return (
-          <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
-            <ComponentRenderer component={component} props={props} />
-            {showCursor && <span className="ai-cursor" />}
-          </div>
-        )
+    // Verifier 需要 planner 的 todos
+    if (component === 'verifier-response' && messages) {
+      const plannerTodos = findPlannerTodos(messages)
+      if (plannerTodos.length > 0) {
+        props.config = { plannerTodos }
       }
-    } catch (error) {
-      console.warn('解析 JSON 失败:', error)
     }
+
+    return (
+      <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
+        <ComponentRenderer component={component} props={props} />
+        {showCursor && <span className="ai-cursor" />}
+      </div>
+    )
   }
 
   return (
@@ -204,6 +191,14 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     isStreaming &&
     !!messageAction
 
+  // 使用 useMemo 缓存 JSON 解析结果
+  const parsedContent = useMemo(() => {
+    if (!message.content) return null
+    return parsePartialJson<{ type?: string; component?: string }>(
+      message.content,
+    )
+  }, [message.content])
+
   return (
     <div
       ref={onRef}
@@ -233,7 +228,12 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               </div>
             </div>
           ) : (
-            renderMessageContent(message.content, shouldShowCursor, messages)
+            renderMessageContent(
+              message.content,
+              shouldShowCursor,
+              messages,
+              parsedContent || undefined,
+            )
           ))}
         {/* 如果没有内容但正在流式输出，也显示光标 */}
         {!message.content && shouldShowCursor && (

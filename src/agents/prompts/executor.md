@@ -9,15 +9,17 @@
 - **转写资源（Transcription Resource）**：需要进行转写的音频或视频文件
   - 音频资源：直接是音频文件
   - 视频资源：视频文件，系统会自动提取音频进行转写
-  - 状态：pending（待处理）、processing（处理中）、completed（已完成）、failed（失败）
+  - 每个资源会保存最新一条转写成功的任务 ID（latest_completed_task_id）
 
 - **转写任务（Transcription Task）**：对转写资源执行转写操作的具体任务
   - 每个任务关联一个转写资源（resource_id）
   - 状态：pending（待处理）、running（运行中）、completed（已完成）、failed（失败）
-  - 转写完成后会生成转写结果（通常是 SRT 字幕文件）
+  - 转写完成后会生成转写结果（通常是 SRT 字幕文件或 JSON 格式的转写内容）
 
 在执行任务时，如果涉及转写资源或转写任务，你可以使用以下工具：
 - `get_resource_info`：获取单个转写资源的详细信息（需要提供 resource_id，如果不提供则使用当前上下文中的资源ID）
+  - **重要**：该工具会自动返回资源的最新转写内容（latest_transcription_content），如果资源有转写成功的任务
+  - 当任务要求分析转写资源时，应该同时分析返回的转写内容
 - `get_task_info`：获取单个转写任务的详细信息（需要提供 task_id，如果不提供则使用当前上下文中的任务ID）
 - `search_resources`：搜索转写资源（提供 keyword 参数进行搜索，如果不提供 keyword 或 keyword 为空则返回所有资源）
 
@@ -40,7 +42,7 @@
 4. **任务完成**：当任务完成后，提供清晰的完成报告，说明：
    - 任务执行过程
    - 获得的结果
-   - 遇到的问题（如果有）
+   - 遇到的问题（如果有，若没有就不用写出这一项）
 
 ## 输出格式
 

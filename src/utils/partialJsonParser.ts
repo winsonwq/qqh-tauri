@@ -13,52 +13,49 @@ export interface PartialJsonResult<T> {
 }
 
 /**
+ * 清理 markdown 代码块标记
+ * 去除开头的 ```json 或 ``` 和末尾的 ```
+ */
+function cleanMarkdownCodeBlock(jsonString: string): string {
+  let cleaned = jsonString.trim()
+  cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '')
+  cleaned = cleaned.replace(/\n?```\s*$/, '')
+
+  return cleaned.trim()
+}
+
+/**
  * 解析部分 JSON
  * 支持流式场景下不完整的 JSON 字符串
- * 
+ *
  * @param jsonString - 可能不完整的 JSON 字符串
  * @returns 解析结果，包含部分数据、是否完整、原始字符串
  */
 export function parsePartialJson<T extends Record<string, any>>(
-  jsonString: string
+  jsonString: string,
 ): PartialJsonResult<T> {
-  // 提取 JSON 对象部分（从第一个 { 到最后一个 }）
-  const jsonMatch = jsonString.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) {
+  try {
+    const cleaned = cleanMarkdownCodeBlock(jsonString)
+    const parsed = partialParse(cleaned) as Partial<T>
+    const isValid = (() => {
+      try {
+        JSON.parse(cleaned)
+        return true
+      } catch {
+        return false
+      }
+    })()
+
+    return {
+      data: parsed,
+      isValid,
+      raw: jsonString,
+    }
+  } catch (error) {
     return {
       data: {} as Partial<T>,
       isValid: false,
       raw: jsonString,
     }
   }
-
-  const jsonStr = jsonMatch[0]
-
-  // 先尝试完整解析
-  try {
-    const parsed = JSON.parse(jsonStr)
-    return {
-      data: parsed as T,
-      isValid: true,
-      raw: jsonString,
-    }
-  } catch {
-    // JSON 不完整，使用 partial-json-parser
-    try {
-      const parsed = partialParse(jsonStr) as Partial<T>
-      return {
-        data: parsed,
-        isValid: false,
-        raw: jsonString,
-      }
-    } catch (error) {
-      console.warn('Partial JSON 解析失败:', error)
-      return {
-        data: {} as Partial<T>,
-        isValid: false,
-        raw: jsonString,
-      }
-    }
-  }
 }
-

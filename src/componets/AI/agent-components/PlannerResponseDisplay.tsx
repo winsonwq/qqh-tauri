@@ -18,31 +18,22 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
 
   // 解析 JSON
   const parsed = useMemo(() => {
-    const jsonMatch = content.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
-      return {
-        data: null as PlannerResponse | null,
-        isValid: false,
-        hasJsonStructure: false,
-      }
-    }
     try {
-      const result = parsePartialJson<PlannerResponse>(jsonMatch[0])
-      return {
-        ...result,
-        hasJsonStructure: true,
-      }
+      return parsePartialJson<PlannerResponse>(content)
     } catch (error) {
       console.warn('JSON 解析失败:', error)
       return {
-        data: null as PlannerResponse | null,
+        data: {} as Partial<PlannerResponse>,
         isValid: false,
-        hasJsonStructure: true,
+        raw: content,
       }
     }
   }, [content])
 
-  const { data, isValid, hasJsonStructure } = parsed
+  const { data, isValid } = parsed
+
+  // 检查是否有 JSON 结构（通过检查内容是否包含 JSON 特征来判断）
+  const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
 
   // 如果没有 JSON 结构，可能是纯文本总结
   if (!hasJsonStructure && content.trim().length > 0) {
@@ -60,8 +51,8 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
     )
   }
 
-  // 如果没有有效数据，不显示
-  if (!data || !isValid) {
+  // 如果有 JSON 结构但没有有效数据，不显示（除非正在流式传输）
+  if (!data || Object.keys(data).length === 0) {
     return null
   }
 

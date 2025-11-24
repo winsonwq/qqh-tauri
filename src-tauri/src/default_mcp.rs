@@ -197,7 +197,6 @@ async fn handle_search_resources(
                 crate::ResourceType::Video => "video",
             },
             "extracted_audio_path": resource.extracted_audio_path,
-            "status": resource.status,
             "created_at": resource.created_at,
             "updated_at": resource.updated_at,
             "task_count": task_count,
@@ -375,8 +374,49 @@ async fn handle_get_resource_info(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
+    // 获取最新转写任务的内容（如果存在）
+    let latest_transcription_content: Option<String> = if let Some(ref latest_task_id) = resource.latest_completed_task_id {
+        // 尝试读取转写结果内容
+        let task_id = latest_task_id.clone();
+        let db_path_clone = db_path.clone();
+        match tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
+            let conn = db::init_database(&db_path_clone)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            let task = db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法查询任务: {}", e))?;
+            
+            if let Some(task) = task {
+                if task.status == "completed" {
+                    if let Some(result_path) = task.result {
+                        let result_file = std::path::PathBuf::from(&result_path);
+                        if result_file.exists() {
+                            let content = std::fs::read_to_string(&result_file)
+                                .map_err(|e| format!("无法读取结果文件: {}", e))?;
+                            Ok(Some(content))
+                        } else {
+                            Ok(None)
+                        }
+                    } else {
+                        Ok(None)
+                    }
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        })
+        .await {
+            Ok(Ok(content)) => content,
+            Ok(Err(_)) => None, // 如果读取失败，不返回错误，只是不包含内容
+            Err(_) => None, // 如果任务执行失败，不包含内容
+        }
+    } else {
+        None
+    };
+    
     // 构建资源信息（作为 component 属性）
-    let resource_info = json!({
+    let mut resource_info = json!({
         "id": resource.id,
         "name": resource.name,
         "file_path": resource.file_path,
@@ -385,11 +425,21 @@ async fn handle_get_resource_info(
             crate::ResourceType::Video => "video",
         },
         "extracted_audio_path": resource.extracted_audio_path,
-        "status": resource.status,
+        "latest_completed_task_id": resource.latest_completed_task_id,
         "created_at": resource.created_at,
         "updated_at": resource.updated_at,
         "task_count": task_count,
     });
+    
+    // 如果存在转写内容，添加到资源信息中
+    if let Some(content) = latest_transcription_content {
+        resource_info["latest_transcription_content"] = json!(content);
+    }
+    
+    // 添加提示信息，说明如果存在转写内容，应该进行分析
+    if resource_info.get("latest_transcription_content").is_some() {
+        resource_info["has_transcription_content"] = json!(true);
+    }
     
     // 返回 component 格式，指定组件名为 resource-info
     Ok(json!({
