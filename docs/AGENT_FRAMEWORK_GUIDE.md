@@ -4,8 +4,10 @@
 
 1. [功能和解决问题简介](#功能和解决问题简介)
 2. [架构设计](#架构设计)
-3. [提示词架构设计](#提示词架构设计)
-4. [如何基于该 Framework 构建新应用](#如何基于该-framework-构建新应用)
+3. [MCP Tools 调用逻辑](#mcp-tools-调用逻辑)
+4. [AI 数据返回与自定义组件渲染](#ai-数据返回与自定义组件渲染)
+5. [提示词架构设计](#提示词架构设计)
+6. [如何基于该 Framework 构建新应用](#如何基于该-framework-构建新应用)
 
 ---
 
@@ -266,6 +268,801 @@ Planner Agent（总结）
    ↓
 返回结果
 ```
+
+---
+
+## MCP Tools 调用逻辑
+
+### 概述
+
+Agent Framework 支持通过 MCP (Model Context Protocol) 协议调用外部工具。框架在 Executor Agent 执行任务时，会自动处理工具调用请求，包括工具发现、服务器查找、参数解析、执行和结果处理等完整流程。
+
+框架通过抽象接口 `IAgentBackend` 与具体的工具执行实现解耦，使得框架本身不依赖于特定的后端实现（如 Tauri、Node.js 等），可以灵活适配不同的运行环境。
+
+### 调用流程
+
+```
+Executor Agent 生成响应
+   ↓
+解析 toolCalls（工具调用请求）
+   ↓
+遍历每个工具调用
+   ├─ 解析工具参数（JSON）
+   ├─ 查找工具所属的 MCP 服务器
+   ├─ 调用 backend.executeTool()
+   │   └─ 通过 IAgentBackend 接口执行工具
+   │       └─ 返回执行结果
+   ├─ 格式化工具结果为 AIMessage
+   ├─ 保存工具结果消息
+   └─ 更新消息列表
+   ↓
+工具结果添加到对话历史
+   ↓
+继续 Executor 循环（使用工具结果）
+```
+
+### 核心组件
+
+#### 1. 工具发现和注册
+
+**位置**：`src/utils/toolUtils.ts`
+
+**功能**：从所有已连接的 MCP 服务器中收集可用工具
+
+```typescript
+export function getAvailableTools(mcpServers: MCPServerInfo[]): MCPTool[] {
+  const tools: MCPTool[] = []
+  mcpServers.forEach((server) => {
+    // 只包含 enabled 为 true 且已连接的服务器
+    const isEnabled = server.config.enabled ?? true
+    if (isEnabled && server.status === 'connected' && server.tools) {
+      tools.push(...server.tools)
+    }
+  })
+  return tools
+}
+```
+
+**关键点**：
+- 只返回 `enabled` 为 `true` 的服务器工具
+- 只包含 `status === 'connected'` 的服务器
+- 工具列表在 `runAgentWorkflow` 中通过 `getAvailableTools(mcpServers)` 获取并传递给 AI
+- 工具列表会作为 `tools` 参数传递给 AI 模型，使其知道可以调用哪些工具
+
+#### 2. 服务器查找
+
+**位置**：`src/agent-framework/workflow/AgentWorkflowEngine.ts`
+
+**功能**：根据工具名称查找对应的 MCP 服务器
+
+```typescript
+private findToolServer(toolName: string, mcpServers: any[]): any {
+    return mcpServers.find((s: any) => s.tools?.some((t: any) => t.name === toolName));
+}
+```
+
+**查找逻辑**：
+- 遍历所有 MCP 服务器
+- 检查每个服务器的工具列表
+- 返回包含指定工具名称的服务器
+- 如果找不到，返回 `undefined`（使用 `'default'` 作为后备）
+
+**为什么需要查找服务器**：
+- MCP 工具可能来自不同的服务器
+- 框架需要知道工具属于哪个服务器，以便正确路由工具调用
+- 服务器信息（如 `serverName`）会传递给 `executeTool` 接口
+
+#### 3. 工具调用执行
+
+**位置**：`src/agent-framework/workflow/AgentWorkflowEngine.ts` (Executor Loop)
+
+**执行步骤**：
+
+1. **解析工具调用**：
+   ```typescript
+   if (response.toolCalls && response.toolCalls.length > 0) {
+       for (const toolCall of response.toolCalls) {
+           // 解析工具参数
+           let args = {};
+           try {
+               args = JSON.parse(toolCall.function.arguments);
+           } catch {}
+   ```
+
+2. **查找服务器**：
+   ```typescript
+   const server = this.findToolServer(toolCall.function.name, options.mcpServers || []);
+   const serverName = server ? (server.key || server.name) : 'default';
+   ```
+
+3. **执行工具**：
+   ```typescript
+   const result = await this.backend.executeTool(
+       serverName,
+       toolCall.function.name,
+       args,
+       { 
+           currentResourceId: options.context?.currentResourceId, 
+           currentTaskId: options.context?.currentTaskId 
+       }
+   );
+   ```
+
+4. **格式化结果**：
+   ```typescript
+   const toolResultMsg: AIMessage = {
+       id: Date.now().toString() + Math.random(),
+       role: 'tool',
+       content: JSON.stringify(result),
+       timestamp: new Date(),
+       tool_call_id: toolCall.id,
+       name: toolCall.function.name
+   };
+   ```
+
+5. **保存和更新**：
+   ```typescript
+   toolResults.push(toolResultMsg);
+   await this.backend.saveMessage(toolResultMsg, chatId);
+   updateMessages(prev => [...prev, ...toolResults]);
+   ```
+
+**关键设计**：
+- 框架通过 `IAgentBackend.executeTool()` 接口执行工具，不关心具体实现
+- 工具结果被格式化为标准的 `AIMessage` 格式
+- 工具结果会被添加到对话历史，供后续 AI 调用使用
+
+#### 4. 工具执行接口抽象
+
+**接口定义**：`src/agent-framework/core/interfaces.ts`
+
+框架通过 `IAgentBackend` 接口抽象工具执行逻辑：
+
+```typescript
+interface IAgentBackend {
+  // 执行 MCP 工具
+  executeTool(
+    serverName: string,
+    toolName: string,
+    args: any,
+    context?: Record<string, any>
+  ): Promise<any>;
+  
+  // 其他方法...
+}
+```
+
+**设计优势**：
+- **解耦**：框架不依赖具体的后端实现
+- **可扩展**：可以轻松实现不同的后端适配器（Tauri、Node.js、Web API 等）
+- **可测试**：可以创建 Mock 实现进行单元测试
+- **灵活性**：不同的应用可以根据自己的环境选择合适的实现
+
+**实现要求**：
+- 实现类需要处理工具的实际执行逻辑
+- 需要根据 `serverName` 路由到正确的 MCP 服务器
+- 需要处理工具执行错误并返回适当的结果
+- 可以传递应用特定的上下文信息（如 `currentResourceId`、`currentTaskId`）
+
+### 工具调用去重策略
+
+Executor Agent 的提示词中明确要求：
+
+> **必须严格遵守**：在调用任何 MCP 工具之前，必须先检查对话历史中是否已经调用过相同的工具并获得了结果。
+
+这个策略通过以下方式实现：
+
+1. **提示词指导**：在 Executor 提示词中明确要求检查对话历史
+2. **上下文传递**：Executor 的每次调用都会包含完整的对话历史（包括之前的工具调用结果）
+3. **AI 模型判断**：AI 模型会根据对话历史判断是否需要调用工具，避免重复调用
+
+**为什么需要去重**：
+- 避免不必要的工具调用，节省时间和资源
+- 提高任务执行效率
+- 减少对工具服务器的负载
+
+### 工具调用上下文
+
+框架在调用工具时会传递以下上下文信息：
+
+- `currentResourceId`：当前资源 ID（如果存在）
+- `currentTaskId`：当前任务 ID（如果存在）
+
+这些上下文信息通过 `options.context` 传递，最终会传递给 `backend.executeTool()` 的 `context` 参数。某些工具可能会使用这些信息来执行特定操作或访问相关资源。
+
+### 错误处理
+
+框架层面的错误处理策略：
+
+1. **参数解析错误**：如果工具参数 JSON 解析失败，使用空对象 `{}` 继续执行
+2. **服务器查找失败**：如果找不到工具对应的服务器，使用 `'default'` 作为后备
+3. **工具执行错误**：捕获异常并记录错误，但不中断整个工作流
+
+```typescript
+try {
+    // ... 工具调用逻辑
+} catch (err) {
+    console.error(err);
+    // Handle error - 继续执行其他工具或任务
+}
+```
+
+**设计考虑**：
+- 单个工具调用失败不应该中断整个任务执行流程
+- 错误信息会被记录，便于调试
+- 框架将错误处理的责任部分交给实现层，部分由框架统一处理
+
+### 工具结果处理
+
+工具执行结果会被：
+
+1. **格式化为 AIMessage**：包含 `role: 'tool'`、`tool_call_id`、`name` 等字段，符合 AI 模型的消息格式要求
+2. **保存到存储**：通过 `backend.saveMessage()` 保存，具体存储方式由实现层决定
+3. **添加到消息列表**：通过 `updateMessages()` 更新 UI，让用户看到工具调用结果
+4. **传递给下一轮对话**：工具结果会出现在对话历史中，供 AI 模型使用，实现多轮工具调用
+
+**消息格式**：
+```typescript
+{
+    role: 'tool',
+    content: JSON.stringify(result),  // 工具执行结果（JSON 字符串）
+    tool_call_id: toolCall.id,        // 关联的工具调用 ID
+    name: toolCall.function.name      // 工具名称
+}
+```
+
+### 完整示例
+
+假设 Executor Agent 需要调用 `get_system_info` 工具：
+
+1. **AI 响应包含工具调用**：
+   ```json
+   {
+     "tool_calls": [{
+       "id": "call_123",
+       "function": {
+         "name": "get_system_info",
+         "arguments": "{\"include_details\": true}"
+       }
+     }]
+   }
+   ```
+
+2. **框架解析并执行**：
+   ```typescript
+   // 1. 解析工具调用
+   const toolCall = response.toolCalls[0];
+   const args = JSON.parse(toolCall.function.arguments); // { include_details: true }
+   
+   // 2. 查找服务器
+   const server = findToolServer('get_system_info', mcpServers);
+   const serverName = server.key || server.name;
+   
+   // 3. 执行工具（通过抽象接口）
+   const result = await backend.executeTool(serverName, 'get_system_info', args);
+   
+   // 4. 格式化结果
+   const toolResultMsg = {
+       role: 'tool',
+       content: JSON.stringify(result),
+       tool_call_id: 'call_123',
+       name: 'get_system_info'
+   };
+   ```
+
+3. **结果添加到对话历史**：
+   - 工具结果消息被保存
+   - 下一轮 Executor 调用会包含这个工具结果
+   - AI 模型可以使用工具结果继续执行任务
+
+### 注意事项
+
+1. **工具可用性**：只有已连接且启用的 MCP 服务器的工具才会被提供给 AI
+2. **服务器查找**：如果多个服务器提供同名工具，会返回第一个匹配的服务器
+3. **参数验证**：框架不验证工具参数，参数验证由工具本身或实现层处理
+4. **异步执行**：工具调用是异步的，框架会等待所有工具调用完成后再继续
+5. **错误恢复**：单个工具调用失败不会中断整个工作流，但会影响任务执行结果
+6. **接口抽象**：框架通过 `IAgentBackend` 接口与具体实现解耦，可以适配不同的运行环境
+
+---
+
+## AI 数据返回与自定义组件渲染
+
+### 概述
+
+Agent Framework 支持流式响应（Streaming）和自定义组件渲染机制，使得 AI 返回的数据可以以渐进式的方式展示，并且支持通过 Web Components 或 React 组件进行丰富的交互式展示。
+
+### 流式响应（Streaming）
+
+#### 流式数据格式
+
+框架通过事件机制接收流式数据，支持以下事件类型：
+
+1. **content**：文本内容流
+2. **tool_calls**：工具调用请求
+3. **reasoning**：AI 推理过程（thinking）
+4. **done**：流式响应完成
+5. **stopped**：流式响应被停止
+
+#### 流式响应处理流程
+
+```
+AI 开始生成响应
+   ↓
+前端监听流式事件
+   ↓
+接收 content 事件
+   ├─ 实时更新消息内容
+   ├─ 触发组件重新渲染
+   └─ 支持部分 JSON 解析
+   ↓
+接收 tool_calls 事件
+   ├─ 保存工具调用信息
+   ├─ 判断是否需要用户确认
+   └─ 更新消息状态
+   ↓
+接收 reasoning 事件（可选）
+   ├─ 累积推理内容
+   └─ 单独展示推理过程
+   ↓
+接收 done/stopped 事件
+   ├─ 保存完整消息
+   ├─ 执行待处理的工具调用
+   └─ 清理流式状态
+```
+
+#### 流式响应实现
+
+**位置**：`src/hooks/useStreamResponse.ts`
+
+```typescript
+const unlisten = await listen(eventName, (event) => {
+  const payload = event.payload
+  
+  if (payload.type === 'content' && payload.content) {
+    // 实时更新消息内容
+    finalContent += payload.content
+    updateMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === assistantMessageId
+          ? { ...msg, content: msg.content + payload.content }
+          : msg
+      )
+    )
+  } else if (payload.type === 'tool_calls' && payload.tool_calls) {
+    // 处理工具调用
+    finalToolCalls = payload.tool_calls
+    // ...
+  } else if (payload.type === 'reasoning' && payload.content) {
+    // 处理推理内容
+    finalReasoning += payload.content
+    // ...
+  } else if (payload.type === 'done' || payload.type === 'stopped') {
+    // 流式响应完成
+    // 保存消息、执行工具调用等
+  }
+})
+```
+
+**关键特性**：
+- **实时更新**：内容逐字符/逐块更新，提供流畅的用户体验
+- **状态管理**：通过 `updateMessages` 实时更新 UI 状态
+- **部分解析**：支持在流式传输过程中解析部分 JSON，实现渐进式渲染
+
+### 自定义组件渲染
+
+框架支持两种类型的自定义组件：
+
+1. **Web Components**：标准的 Web Components（HTML 字符串）
+2. **React Components**：通过组件注册表管理的 React 组件
+
+#### 组件类型定义
+
+**位置**：`src/componets/AI/ToolResultDisplay.tsx`
+
+```typescript
+export interface ToolResultContentItem {
+  type: 'text' | 'json' | 'webcomponent' | 'component'
+  value?: string        // webcomponent: HTML 字符串
+  component?: string   // component: 组件名称
+  props?: Record<string, any>  // component: 组件属性
+}
+```
+
+#### Web Components 渲染
+
+**特点**：
+- 使用 `dangerouslySetInnerHTML` 渲染 HTML 字符串
+- 浏览器自动识别并初始化 Web Components
+- 支持自定义元素（Custom Elements）和 Shadow DOM
+
+**实现**：
+
+```typescript
+case 'webcomponent':
+  if (item.value) {
+    return (
+      <div
+        dangerouslySetInnerHTML={{ __html: item.value }}
+      />
+    )
+  }
+```
+
+**使用场景**：
+- 需要完全独立的组件（不受 React 生命周期影响）
+- 需要 Shadow DOM 隔离样式
+- 需要与第三方 Web Components 库集成
+
+**示例**：
+```json
+{
+  "type": "webcomponent",
+  "value": "<my-custom-element data-id='123'></my-custom-element>"
+}
+```
+
+#### React Components 渲染
+
+**组件注册表机制**：
+
+**位置**：`src/componets/AI/ComponentRegistry.tsx`
+
+```typescript
+class ComponentRegistry {
+  private components: Map<string, ToolComponent> = new Map()
+
+  // 注册组件
+  register(name: string, component: ToolComponent) {
+    this.components.set(name, component)
+  }
+
+  // 获取组件
+  get(name: string): ToolComponent | undefined {
+    return this.components.get(name)
+  }
+
+  // 渲染组件
+  render(name: string, props: ComponentProps): React.ReactElement | null {
+    const Component = this.get(name)
+    if (!Component) return null
+    return React.createElement(Component, { props })
+  }
+}
+```
+
+**组件注册**：
+
+**位置**：`src/componets/AI/ComponentInit.tsx`
+
+```typescript
+export function initComponents() {
+  // 注册工具组件
+  componentRegistry.register('resource-info', ResourceInfo)
+  componentRegistry.register('task-info', TaskInfo)
+  componentRegistry.register('resource-list', ResourceList)
+  
+  // 注册 Agent 响应组件
+  componentRegistry.register('planner-response', PlannerResponseAdapter)
+  componentRegistry.register('executor-response', ExecutorResponseAdapter)
+  componentRegistry.register('verifier-response', VerifierResponseAdapter)
+  
+  // 注册字段级组件
+  componentRegistry.register('todo-list', TodoListAdapter)
+}
+```
+
+**组件渲染**：
+
+```typescript
+case 'component':
+  if (item.component && item.props) {
+    return (
+      <ComponentRenderer
+        component={item.component}
+        props={item.props}
+      />
+    )
+  }
+```
+
+**使用场景**：
+- 需要与 React 生态系统集成
+- 需要 React Hooks、Context 等特性
+- 需要与框架的其他 React 组件交互
+
+**示例**：
+```json
+{
+  "type": "component",
+  "component": "todo-list",
+  "props": {
+    "todos": [
+      { "id": "task-1", "description": "任务描述", "status": "pending" }
+    ]
+  }
+}
+```
+
+### Streaming + 自定义组件绑定
+
+#### 渐进式渲染
+
+框架支持在流式传输过程中渐进式渲染组件：
+
+1. **部分 JSON 解析**：
+   ```typescript
+   // 解析部分 JSON（即使不完整）
+   const parsed = parsePartialJson<PlannerResponse>(content)
+   
+   // 如果 JSON 不完整但有部分数据，尝试渲染
+   if (parsed?.data && Object.keys(parsed.data).length > 0) {
+     // 使用组件渲染部分数据
+   }
+   ```
+
+2. **实时更新**：
+   - 流式传输过程中，组件会随着内容更新而重新渲染
+   - 支持显示"正在输入"的光标效果
+   - 组件可以响应数据变化，更新 UI
+
+3. **组件状态管理**：
+   ```typescript
+   // 流式传输时显示光标
+   {showCursor && <span className="ai-cursor" />}
+   
+   // 组件根据内容变化自动更新
+   const parsed = useMemo(() => {
+     return parsePartialJson<PlannerResponse>(content)
+   }, [content])  // content 变化时重新解析
+   ```
+
+#### 事件绑定机制
+
+**React Components 事件绑定**：
+
+React 组件天然支持事件绑定，通过 props 传递事件处理函数：
+
+```typescript
+// 组件定义
+const TodoList: React.FC<TodoListProps> = ({ todos, onClick }) => {
+  return (
+    <div onClick={onClick}>
+      {/* ... */}
+    </div>
+  )
+}
+
+// 使用组件时传递事件处理函数
+<ComponentRenderer
+  component="todo-list"
+  props={{
+    todos: [...],
+    onClick: (todo) => {
+      // 处理点击事件
+    }
+  }}
+/>
+```
+
+**Web Components 事件绑定**：
+
+Web Components 通过标准 DOM 事件机制绑定事件：
+
+```typescript
+// 渲染 Web Component
+<div dangerouslySetInnerHTML={{ __html: htmlString }} />
+
+// 事件绑定（在 useEffect 中）
+useEffect(() => {
+  const element = containerRef.current?.querySelector('my-custom-element')
+  if (element) {
+    element.addEventListener('custom-event', handleCustomEvent)
+    return () => {
+      element.removeEventListener('custom-event', handleCustomEvent)
+    }
+  }
+}, [htmlString])
+```
+
+**自定义事件通信**：
+
+组件可以通过自定义事件与框架通信：
+
+```typescript
+// 组件触发自定义事件
+const handleAction = () => {
+  const event = new CustomEvent('component-action', {
+    detail: { action: 'click', data: {...} }
+  })
+  window.dispatchEvent(event)
+}
+
+// 框架监听自定义事件
+useEffect(() => {
+  const handler = (e: CustomEvent) => {
+    // 处理组件事件
+  }
+  window.addEventListener('component-action', handler as EventListener)
+  return () => {
+    window.removeEventListener('component-action', handler as EventListener)
+  }
+}, [])
+```
+
+### 设计优势
+
+#### 1. 灵活性
+
+**多种内容类型支持**：
+- 文本：纯文本内容
+- JSON：结构化数据
+- Web Components：标准 Web Components
+- React Components：React 组件
+
+**渐进式渲染**：
+- 支持流式传输过程中的部分渲染
+- 即使 JSON 不完整，也能显示已有数据
+- 提供流畅的用户体验
+
+#### 2. 可扩展性
+
+**组件注册机制**：
+- 通过注册表管理组件，易于扩展
+- 支持动态注册新组件
+- 组件与框架解耦，易于维护
+
+**适配器模式**：
+- 框架组件通过适配器接入注册表
+- 保持框架组件与工具组件的独立性
+- 支持组件复用和组合
+
+#### 3. 实时性
+
+**流式响应支持**：
+- 实时更新 UI，无需等待完整响应
+- 支持显示"正在输入"状态
+- 提供即时反馈
+
+**组件响应式更新**：
+- 组件自动响应数据变化
+- 使用 React Hooks 实现响应式更新
+- 支持部分数据渲染
+
+#### 4. 解耦设计
+
+**组件与框架解耦**：
+- 组件通过注册表管理，不直接依赖框架
+- 组件可以独立开发和测试
+- 支持组件库的复用
+
+**接口抽象**：
+- 统一的组件接口（`ToolComponent`）
+- 统一的属性格式（`ComponentProps`）
+- 易于替换和扩展
+
+#### 5. 类型安全
+
+**TypeScript 支持**：
+- 完整的类型定义
+- 编译时类型检查
+- 良好的 IDE 支持
+
+**运行时验证**：
+- 组件存在性检查
+- 属性格式验证
+- 错误处理和降级
+
+### 完整示例
+
+#### 示例 1：流式渲染 Planner 响应
+
+```typescript
+// 1. AI 开始流式返回数据
+// 流式内容: {"type":"component","component":"planner-response","summary":"规划中"
+// 流式内容: ,"todos":[{"id":"task-1","description":"任务1"
+// 流式内容: ,"priority":1}]}
+
+// 2. 框架实时解析和渲染
+const parsed = parsePartialJson<PlannerResponse>(content)
+// parsed.data = { summary: "规划中", todos: [{ id: "task-1", ... }] }
+
+// 3. 组件渐进式渲染
+<PlannerResponseDisplay content={content} />
+// 组件内部：
+// - 解析部分 JSON
+// - 显示已解析的 summary
+// - 显示已解析的 todos（即使不完整）
+// - 显示"正在输入"光标
+```
+
+#### 示例 2：工具结果渲染自定义组件
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "value": "查询结果："
+    },
+    {
+      "type": "component",
+      "component": "resource-list",
+      "props": {
+        "resources": [
+          { "id": "res-1", "name": "资源1" },
+          { "id": "res-2", "name": "资源2" }
+        ],
+        "onClick": "handleResourceClick"
+      }
+    }
+  ]
+}
+```
+
+```typescript
+// 解析工具结果
+const items = parseToolResultContent(content)
+
+// 渲染组件
+<ToolResultDisplay items={items} />
+
+// ComponentRenderer 查找并渲染组件
+<ComponentRenderer
+  component="resource-list"
+  props={{
+    resources: [...],
+    onClick: handleResourceClick
+  }}
+/>
+```
+
+#### 示例 3：Web Component 事件绑定
+
+```typescript
+// 1. 渲染 Web Component
+const htmlString = '<my-chart data-id="123"></my-chart>'
+<div dangerouslySetInnerHTML={{ __html: htmlString }} />
+
+// 2. 绑定事件
+useEffect(() => {
+  const chartElement = containerRef.current?.querySelector('my-chart')
+  if (chartElement) {
+    const handleDataUpdate = (e: CustomEvent) => {
+      // 处理数据更新事件
+      updateChartData(e.detail.data)
+    }
+    
+    chartElement.addEventListener('data-update', handleDataUpdate)
+    
+    return () => {
+      chartElement.removeEventListener('data-update', handleDataUpdate)
+    }
+  }
+}, [htmlString])
+```
+
+### 最佳实践
+
+1. **组件设计**：
+   - 组件应该是纯函数组件或使用 React Hooks
+   - 组件应该处理 props 的默认值和边界情况
+   - 组件应该提供清晰的错误处理
+
+2. **流式渲染**：
+   - 使用 `parsePartialJson` 处理部分 JSON
+   - 在组件中使用 `useMemo` 优化解析性能
+   - 提供加载状态和错误状态
+
+3. **事件处理**：
+   - 使用 React 事件处理（对于 React Components）
+   - 使用 DOM 事件监听（对于 Web Components）
+   - 及时清理事件监听器，避免内存泄漏
+
+4. **组件注册**：
+   - 在应用启动时统一注册组件
+   - 使用有意义的组件名称
+   - 提供组件文档和使用示例
 
 ---
 
