@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { HiChevronDown } from 'react-icons/hi2'
+import { IconType } from 'react-icons'
 
 export interface SelectOption {
   value: string
   label: string
   disabled?: boolean
+  icon?: IconType
 }
 
 interface SelectProps {
@@ -256,7 +258,12 @@ const Select = ({
         aria-label={ariaLabel || placeholder}
         aria-required={required}
       >
-        <span className="truncate flex-1 text-left">{displayText}</span>
+        <span className="truncate flex-1 text-left flex items-center gap-1.5">
+          {selectedOption?.icon && (
+            <selectedOption.icon className="h-3.5 w-3.5 flex-shrink-0" />
+          )}
+          {displayText}
+        </span>
         <HiChevronDown
           className={`h-4 w-4 flex-shrink-0 ml-2 transition-transform ${
             isOpen ? 'rotate-180' : ''
@@ -301,7 +308,12 @@ const Select = ({
                     onMouseEnter={() => !isDisabled && setFocusedIndex(index)}
                     title={option.label}
                   >
-                    <span className="truncate block">{option.label}</span>
+                    <span className="truncate block flex items-center gap-2">
+                      {option.icon && (
+                        <option.icon className="h-4 w-4 flex-shrink-0" />
+                      )}
+                      {option.label}
+                    </span>
                   </li>
                 )
               })}

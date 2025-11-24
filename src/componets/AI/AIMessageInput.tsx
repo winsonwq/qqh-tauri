@@ -3,6 +3,8 @@ import {
   FaArrowUp,
   FaStop,
 } from 'react-icons/fa'
+import { HiArrowPath } from 'react-icons/hi2'
+import { TbInfinity, TbMessageCircle } from 'react-icons/tb'
 import RichTextEditor, { RichTextEditorRef } from './RichTextEditor'
 import { MentionOption } from './MentionPlugin'
 import AIConfigSelector from './AIConfigSelector'
@@ -84,8 +86,8 @@ const AIMessageInput = ({
             <Select
               value={mode}
               options={[
-                { value: 'ask', label: 'Ask' },
-                { value: 'agents', label: 'Agents' },
+                { value: 'ask', label: 'Ask', icon: TbMessageCircle },
+                { value: 'agents', label: 'Agents', icon: TbInfinity },
               ]}
               onChange={(value) => {
                 if (onModeChange) {
