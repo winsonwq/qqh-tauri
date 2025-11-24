@@ -34,7 +34,7 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
     }
   }, [content])
 
-  const { data, isValid } = parsed
+  const { data } = parsed
 
   const todos: Todo[] = useMemo(() => {
     if (!data || !data.tasks || !Array.isArray(data.tasks)) {
@@ -57,33 +57,34 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
         priority: 0,
       }
     })
-  }, [parsed, plannerTodos])
-
-  // 如果没有有效数据，不显示（在所有 Hooks 调用之后）
-  if (!data || !isValid) {
-    return null
-  }
+  }, [data, plannerTodos])
 
   // 检查是否有有效数据
+  const overallFeedback = data?.overallFeedback
+  const overallFeedbackText = typeof overallFeedback === 'string' ? overallFeedback : String(overallFeedback || '')
   const hasData =
-    (data.overallFeedback && data.overallFeedback.trim().length > 0) ||
+    (overallFeedbackText.trim().length > 0) ||
     todos.length > 0 ||
-    data.allCompleted !== undefined
+    data?.allCompleted !== undefined
 
+  // 如果没有有效数据，不显示
+  // 注意：流式传输时，即使 JSON 不完整，如果有部分数据也应该显示
   if (!hasData) {
     return null
   }
 
   return (
     <div className="verifier-response stream-json-display space-y-4">
-      <div className="summary-section prose prose-sm max-w-none text-base-content">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={markdownComponents}
-        >
-          {data.overallFeedback}
-        </ReactMarkdown>
-      </div>
+      {overallFeedbackText.trim().length > 0 && (
+        <div className="summary-section prose prose-sm max-w-none text-base-content">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={markdownComponents}
+          >
+            {overallFeedbackText}
+          </ReactMarkdown>
+        </div>
+      )}
 
       {todos.length > 0 && (
         <TodoList todos={todos} title={`任务验证结果 (${todos.length})`} />

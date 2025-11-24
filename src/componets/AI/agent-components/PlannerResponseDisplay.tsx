@@ -51,20 +51,21 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
     )
   }
 
-  // 如果有 JSON 结构但没有有效数据，不显示（除非正在流式传输）
-  if (!data || Object.keys(data).length === 0) {
-    return null
-  }
-
-  const { summary, todos, needsMorePlanning } = data
+  // 提取数据字段，使用安全的默认值
+  const summary = data?.summary
+  const todos = data?.todos
+  const needsMorePlanning = data?.needsMorePlanning
 
   // 检查是否有有效数据，确保 summary 是字符串类型
   const summaryText = typeof summary === 'string' ? summary : String(summary || '')
+  const todosArray = Array.isArray(todos) ? todos : []
   const hasData =
     (summaryText.trim().length > 0) ||
-    (Array.isArray(todos) && todos.length > 0) ||
+    (todosArray.length > 0) ||
     needsMorePlanning !== undefined
 
+  // 如果没有有效数据，不显示
+  // 注意：流式传输时，即使 JSON 不完整，如果有部分数据也应该显示
   if (!hasData) {
     return null
   }
@@ -84,8 +85,8 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
       )}
 
       {/* 渲染 todos */}
-      {Array.isArray(todos) && todos.length > 0 && (
-        <TodoList todos={todos} />
+      {todosArray.length > 0 && (
+        <TodoList todos={todosArray} />
       )}
     </div>
   )

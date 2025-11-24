@@ -16,6 +16,7 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
 }) => {
   const { content } = props
 
+
   // 解析 JSON
   const parsed = useMemo(() => {
     try {
@@ -30,26 +31,7 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
     }
   }, [content])
 
-  const { data, isValid } = parsed
-
-  // 检查是否有 JSON 结构（通过检查内容是否包含 JSON 特征来判断）
-  const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
-
-  // 如果没有 JSON 结构，可能是纯文本总结
-  if (!hasJsonStructure && content.trim().length > 0) {
-    return (
-      <div className="executor-response stream-json-display">
-        <div className="summary-section prose prose-sm max-w-none text-base-content">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
-          >
-            {content}
-          </ReactMarkdown>
-        </div>
-      </div>
-    )
-  }
+  const { data } = parsed
 
   // 提取数据字段，使用安全的默认值
   const summary = data?.summary
@@ -64,17 +46,9 @@ const ExecutorResponseDisplay: React.FC<ExecutorResponseDisplayProps> = ({
     (summaryText.trim().length > 0) ||
     (todosArray.length > 0)
 
-  // 如果有 JSON 结构但没有有效数据
-  if (hasJsonStructure && !hasData) {
-    // 如果 JSON 已完整解析但没有数据，不显示（可能是格式错误）
-    if (isValid) {
-      return null
-    }
-    // 如果 JSON 不完整且没有数据，可能是流式传输中，不显示（等待更多内容）
-    if (!data || Object.keys(data).length === 0) {
-      return null
-    }
-    // 如果 JSON 不完整但有部分数据，继续显示（流式传输中）
+  // 如果没有有效数据，不显示
+  if (!hasData) {
+    return null
   }
 
   return (

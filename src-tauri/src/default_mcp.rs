@@ -197,6 +197,7 @@ async fn handle_search_resources(
                 crate::ResourceType::Video => "video",
             },
             "extracted_audio_path": resource.extracted_audio_path,
+            "latest_completed_task_id": resource.latest_completed_task_id,
             "created_at": resource.created_at,
             "updated_at": resource.updated_at,
             "task_count": task_count,
