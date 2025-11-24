@@ -6,12 +6,17 @@ import {
 import RichTextEditor, { RichTextEditorRef } from './RichTextEditor'
 import { MentionOption } from './MentionPlugin'
 import AIConfigSelector from './AIConfigSelector'
+import Select from '../Select'
+
+export type AIMode = 'ask' | 'agents'
 
 interface AIMessageInputProps {
   onSend?: (message: string, configId?: string) => void
   placeholder?: string
   isStreaming?: boolean
   onStop?: () => void
+  mode?: AIMode
+  onModeChange?: (mode: AIMode) => void
 }
 
 // 示例的 mention 选项（可以根据实际需求替换为 API 调用）
@@ -22,6 +27,8 @@ const AIMessageInput = ({
   placeholder = '在这里输入消息，按 Enter 发送...',
   isStreaming = false,
   onStop,
+  mode = 'agents',
+  onModeChange,
 }: AIMessageInputProps) => {
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
   const editorRef = useRef<RichTextEditorRef>(null)
@@ -72,6 +79,23 @@ const AIMessageInput = ({
       <div className="flex items-center justify-between px-2 pb-2">
         {/* 左侧图标组 */}
         <div className="flex items-center gap-1.5">
+          {/* 模式选择器 */}
+          <div className="w-24">
+            <Select
+              value={mode}
+              options={[
+                { value: 'ask', label: 'Ask' },
+                { value: 'agents', label: 'Agents' },
+              ]}
+              onChange={(value) => {
+                if (onModeChange) {
+                  onModeChange(value as AIMode)
+                }
+              }}
+              size="xs"
+              disabled={isStreaming}
+            />
+          </div>
           {/* AI 配置选择器 */}
           <AIConfigSelector
             selectedConfigId={selectedConfigId}

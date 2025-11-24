@@ -17,6 +17,7 @@ interface SelectProps {
   size?: 'xs' | 'sm' | 'md' | 'lg'
   required?: boolean
   'aria-label'?: string
+  dropdownClassName?: string // 下拉选项列表的自定义样式类
 }
 
 const Select = ({
@@ -29,6 +30,7 @@ const Select = ({
   size = 'md',
   required = false,
   'aria-label': ariaLabel,
+  dropdownClassName = '',
 }: SelectProps) => {
   const [isOpen, setIsOpen] = useState(false)
   const [dropdownPosition, setDropdownPosition] = useState<'bottom' | 'top'>('bottom')
@@ -265,9 +267,9 @@ const Select = ({
       {isOpen && (
         <div
           ref={dropdownRef}
-          className={`absolute z-50 w-full mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-auto ${
+          className={`absolute z-50 min-w-full max-w-[200px] mt-1 bg-base-100 border border-base-300 rounded-lg shadow-lg max-h-60 overflow-auto ${
             dropdownPosition === 'top' ? 'bottom-full mb-1' : 'top-full'
-          }`}
+          } ${dropdownClassName}`}
           role="listbox"
           aria-label={ariaLabel || placeholder}
         >

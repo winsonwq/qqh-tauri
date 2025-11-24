@@ -6,7 +6,7 @@ import { useStreamResponse } from '../../hooks/useStreamResponse'
 import { useToolCalls } from '../../hooks/useToolCalls'
 import { runAgentWorkflow } from '../../hooks/useAgentWorkflow'
 import { invoke } from '@tauri-apps/api/core'
-import AIMessageInput from './AIMessageInput'
+import AIMessageInput, { AIMode } from './AIMessageInput'
 import { ToolCall } from './ToolCallConfirmModal'
 import { MessageItem } from './MessageItem'
 import { ChatBar } from './ChatBar'
@@ -33,6 +33,7 @@ const AIPanel = () => {
   const mcpServers = useAppSelector((state) => state.mcp.servers)
   const { currentResourceId, currentTaskId } = useAppSelector((state) => state.aiContext)
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
+  const [mode, setMode] = useState<AIMode>('agents')
   const isStoppedRef = useRef<boolean>(false)
 
   // 动态生成 system message，根据当前上下文状态添加提示信息
@@ -132,8 +133,116 @@ const AIPanel = () => {
     }
   }, [configs, selectedConfigId])
 
-  // 处理发送消息
-  const handleSend = useCallback(
+  // 处理发送消息 - Ask 模式（单次 AI 问答）
+  const handleSendAsk = useCallback(
+    async (messageText: string, configId?: string) => {
+      // 防止重复调用
+      if (isStreaming) {
+        return
+      }
+
+      const effectiveConfigId = configId || selectedConfigId
+      if (!effectiveConfigId) {
+        message.error('请先选择 AI 配置')
+        return
+      }
+
+      // 确保有当前 chat
+      let chatId = currentChat?.id
+      if (!chatId) {
+        try {
+          const newChat = await handleCreateChat()
+          chatId = newChat?.id
+        } catch (err) {
+          return
+        }
+      }
+
+      // 重置停止标志
+      isStoppedRef.current = false
+
+      // 添加用户消息
+      const userMessageId = Date.now().toString()
+      const userMessage: AIMessage = {
+        id: userMessageId,
+        role: 'user',
+        content: messageText,
+        timestamp: new Date(),
+      }
+      updateMessages((prev) => [...prev, userMessage])
+
+      // 保存用户消息到数据库
+      try {
+        await invoke('save_message', {
+          chatId,
+          role: 'user',
+          content: messageText,
+          toolCalls: null,
+          toolCallId: null,
+          name: null,
+          reasoning: null,
+        })
+      } catch (err) {
+        console.error('保存用户消息失败:', err)
+      }
+
+      try {
+        setIsStreaming(true)
+
+        // 获取当前消息列表（包含刚添加的用户消息）
+        const currentMessages = messagesRef.current
+        const chatMessages = convertAIMessagesToChatMessages(currentMessages)
+        const tools = getAvailableTools(mcpServers)
+
+        // 生成 eventId
+        const eventId = generateEventId()
+        setCurrentStreamEventId(eventId)
+
+        // 先设置监听器，然后再调用后端
+        await startStreamResponse(
+          eventId,
+          chatId!,
+          updateMessages,
+          executeToolCallsAndContinue,
+          mcpServers,
+        )
+
+        // 调用流式 API
+        await invoke<string>('chat_completion', {
+          configId: effectiveConfigId,
+          messages: chatMessages,
+          tools: tools.length > 0 ? tools : null,
+          systemMessage: systemMessage,
+          eventId: eventId,
+        })
+      } catch (err) {
+        console.error('AI 对话失败:', err)
+        if (!isStoppedRef.current) {
+          message.error(`AI 对话失败: ${err}`)
+        }
+        setIsStreaming(false)
+        setCurrentStreamEventId(null)
+      }
+    },
+    [
+      selectedConfigId,
+      currentChat,
+      handleCreateChat,
+      updateMessages,
+      messagesRef,
+      mcpServers,
+      systemMessage,
+      setIsStreaming,
+      setCurrentStreamEventId,
+      startStreamResponse,
+      executeToolCallsAndContinue,
+      message,
+      isStreaming,
+    ],
+  )
+
+  // 处理发送消息 - Agents 模式（多 Agent 工作流）
+  const handleSendAgents = useCallback(
     async (messageText: string, configId?: string) => {
       // 防止重复调用
       if (isStreaming) {
@@ -228,10 +337,21 @@ const AIPanel = () => {
       systemMessage,
       setIsStreaming,
       setCurrentStreamEventId,
-      executeToolCallsAndContinue,
       message,
       isStreaming,
     ],
+  )
+
+  // 统一的发送处理函数
+  const handleSend = useCallback(
+    async (messageText: string, configId?: string) => {
+      if (mode === 'ask') {
+        await handleSendAsk(messageText, configId)
+      } else {
+        await handleSendAgents(messageText, configId)
+      }
+    },
+    [mode, handleSendAsk, handleSendAgents],
   )
 
   // 处理工具调用确认
@@ -463,7 +583,13 @@ const AIPanel = () => {
 
       {/* 输入框区域 - 固定在底部 */}
       <div className="flex-shrink-0 p-3">
-        <AIMessageInput onSend={handleSend} isStreaming={isStreaming} onStop={handleStop} />
+        <AIMessageInput
+          onSend={handleSend}
+          isStreaming={isStreaming}
+          onStop={handleStop}
+          mode={mode}
+          onModeChange={setMode}
+        />
       </div>
     </div>
   )
