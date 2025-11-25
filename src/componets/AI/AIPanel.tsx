@@ -4,7 +4,7 @@ import { useChatManagement } from '../../hooks/useChatManagement'
 import { useStickyMessages } from '../../hooks/useStickyMessages'
 import { useStreamResponse } from '../../hooks/useStreamResponse'
 import { useToolCalls } from '../../hooks/useToolCalls'
-import { runAgentWorkflow } from '../../hooks/useAgentWorkflow'
+import { runAgentWorkflow, AgentWorkflowController } from '../../hooks/useAgentWorkflow'
 import { invoke } from '@tauri-apps/api/core'
 import AIMessageInput, { AIMode } from './AIMessageInput'
 import { ToolCall } from './ToolCallConfirmModal'
@@ -35,6 +35,7 @@ const AIPanel = () => {
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
   const [mode, setMode] = useState<AIMode>('agents')
   const isStoppedRef = useRef<boolean>(false)
+  const workflowControllerRef = useRef<AgentWorkflowController | null>(null)
 
   // 动态生成 system message，根据当前上下文状态添加提示信息
   const systemMessage = useMemo(() => {
@@ -301,8 +302,8 @@ const AIPanel = () => {
         // 因为 userMessage 会单独传递给 runAgentWorkflow
         const currentMessages = messagesRef.current.filter(msg => msg.id !== userMessageId)
 
-        // 使用 Agent 工作流
-        await runAgentWorkflow({
+        // 使用 Agent 工作流，获取控制器
+        const { controller, promise } = runAgentWorkflow({
           configId: effectiveConfigId,
           chatId: chatId!,
           userMessage: messageText,
@@ -313,8 +314,12 @@ const AIPanel = () => {
           currentResourceId: currentResourceId,
           currentTaskId: currentTaskId,
           systemMessage: systemMessage,
-          isStoppedRef: isStoppedRef,
         })
+        
+        // 保存控制器引用，以便停止时使用
+        workflowControllerRef.current = controller
+        
+        await promise
       } catch (err) {
         console.error('AI 对话失败:', err)
         if (!isStoppedRef.current) {
@@ -323,6 +328,7 @@ const AIPanel = () => {
       } finally {
         setIsStreaming(false)
         setCurrentStreamEventId(null)
+        workflowControllerRef.current = null
       }
     },
     [
@@ -391,19 +397,24 @@ const AIPanel = () => {
     // 设置停止标志
     isStoppedRef.current = true
 
+    // 停止 Agent 工作流（会中止所有进行中的请求）
+    if (workflowControllerRef.current) {
+      workflowControllerRef.current.stop()
+      workflowControllerRef.current = null
+    }
+
+    // 同时停止单独的流式请求（Ask 模式）
     if (currentStreamEventId) {
       try {
         await invoke('stop_chat_completion', { eventId: currentStreamEventId })
-        // 注意：停止后，handleStreamResponse 中的 'stopped' 事件会处理清理和保存
       } catch (err) {
         console.error('停止请求失败:', err)
-        message.error('停止请求失败')
       }
     }
 
     setIsStreaming(false)
     setCurrentStreamEventId(null)
-  }, [currentStreamEventId, message, setIsStreaming, setCurrentStreamEventId])
+  }, [currentStreamEventId, setIsStreaming, setCurrentStreamEventId])
 
   // 使用 AI 总结 chat 标题
   const handleSummarizeTitle = useCallback(async () => {
