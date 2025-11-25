@@ -1215,322 +1215,190 @@ executorResponse.todos.forEach(t => {
 
 ## 提示词架构设计
 
-### 提示词模板系统
+### 双层提示词架构
 
-框架使用**模板系统**管理提示词，支持：
-1. **模板变量替换**：使用 `{{systemContext}}` 占位符注入应用上下文
-2. **动态模板覆盖**：可以在运行时覆盖默认模板
-3. **结构化输出**：所有 Agent 输出标准化的 JSON 格式
+框架采用**双层提示词架构**，将提示词分为两个层级：
 
-### 模板结构
+1. **框架层级（Core Templates）**：位于 `src/agent-framework/prompts/templates.ts`
+   - 包含确保框架正常工作的核心提示词
+   - 定义 Agent 角色、输出格式、框架约束等
+   - 使用 `{{businessContext}}` 占位符注入业务上下文
 
-每个 Agent 的提示词模板包含以下部分：
+2. **业务层级（Business Context）**：位于 `src/agents/prompts/*.md`
+   - 包含与具体业务相关的系统提示词
+   - 定义业务概念、业务规则、领域知识等
+   - 每个 Agent 可以有独立的业务上下文
+
+**最终的 System Message = 框架核心模板 + 业务上下文**
+
+### 文件结构
+
+```
+src/
+├── agent-framework/
+│   └── prompts/
+│       ├── templates.ts      # 框架核心模板（确保框架工作）
+│       └── PromptManager.ts  # 提示词管理器（合并两层）
+└── agents/
+    └── prompts/
+        ├── planner.md        # Planner 业务上下文
+        ├── executor.md       # Executor 业务上下文
+        └── verifier.md       # Verifier 业务上下文
+```
+
+### 框架核心模板结构
+
+每个 Agent 的核心模板包含以下部分：
 
 1. **角色定义**：明确 Agent 的身份和职责
-2. **系统上下文**：应用特定的上下文信息（通过 `{{systemContext}}` 注入）
-3. **职责说明**：详细说明 Agent 需要做什么
-4. **输出格式**：明确要求输出 JSON 格式
-5. **注意事项**：重要的执行规则和约束
+2. **业务上下文占位符**：`{{businessContext}}` 用于注入业务上下文
+3. **核心职责**：框架要求的基本职责
+4. **输出格式**：明确要求输出 JSON 格式（必须遵守）
+5. **框架约束**：确保框架正常工作的约束条件
 
-### Planner 提示词示例
+### 业务上下文结构
 
-```markdown
-# Planner Agent 提示词
+每个 Agent 的业务上下文（.md 文件）包含：
+
+1. **核心概念**：业务领域的核心概念定义
+2. **业务规则**：特定于业务的规则和约束
+3. **操作指南**：业务相关的操作步骤和策略
+
+### 框架核心模板示例（Planner）
+
+**位置**：`src/agent-framework/prompts/templates.ts`
+
+```typescript
+export const PLANNER_CORE_TEMPLATE = `
+# Planner Agent
 
 你是一个专业的任务规划专家（Planner），负责将用户的需求分解成可执行的任务列表。
 
-## 系统上下文
+## 业务上下文
 
-{{systemContext}}
+{{businessContext}}
 
-## 你的职责
+## 核心职责
 
-1. **理解用户需求**：仔细分析用户提出的问题或任务，理解其核心目标和期望结果。
-2. **制定任务计划**：将复杂的需求分解成一系列清晰、具体、可执行的任务项（todos）。
-3. **任务优先级**：为每个任务分配合理的优先级，确保重要任务优先执行。
-4. **任务描述**：每个任务应该包含：
-   - 明确的任务描述
-   - 预期的完成标准
-   - 执行该任务所需的关键信息
+1. **理解用户需求**：仔细分析用户提出的问题或任务
+2. **制定任务计划**：分解为可执行的任务项
+3. **任务优先级**：分配合理的优先级
+4. **任务描述**：包含明确描述、完成标准、关键信息
 
-## 输出格式
+## 输出格式（必须遵守）
 
-当你完成规划后，请以 JSON 格式输出任务列表：
-
-```json
+\`\`\`json
 {
   "type": "component",
   "component": "planner-response",
   "summary": "规划总结",
   "needsMorePlanning": false,
-  "todos": [
-    {
-      "id": "task-1",
-      "description": "任务描述",
-      "priority": 1,
-      "status": "pending"
-    }
-  ]
+  "todos": [...]
 }
-```
+\`\`\`
 
-## 注意事项
+## 框架约束
 
-- 任务应该具体、可执行，避免过于抽象的描述
-- 考虑任务之间的依赖关系
-- 如果用户需求不明确，可以设置 `needsMorePlanning` 为 `true` 并说明需要什么信息
-- **避免重复规划**：如果已经规划了获取信息的任务，就不需要再次规划相同的任务
-- **重要**：你只负责规划任务，不调用任何工具。工具调用由 Executor 执行
+- 任务应该具体、可执行
+- 避免重复规划
+- 只负责规划，不调用工具
 
 ## 总结职责
 
-当最近一次 planner 发出的所有任务完成后，你需要总结这些任务的完成情况：
-
-### 总结范围
-
-- **总结对象**：最近一次 planner 发出的任务（当前这一轮 planner 输出的所有任务）
-- **不总结**：历史对话中的其他任务或之前 planner 发出的规划结果
-- **聚焦点**：仅关注最近一次 planner 发出的任务执行的结果和用户问题的完成情况
-
-### 总结原则
-
-1. **基于最近一次 planner 发出任务的上下文信息**：
-   - 仔细阅读最近一次 planner 发出的任务列表和任务描述
-   - 综合最近一次 planner 发出的任务执行的结果和工具调用的返回数据
-   - 考虑与最近一次 planner 发出的任务相关的上下文信息（如资源信息、任务状态等）
-
-2. **满足用户的原始描述**：
-   - 回到用户最近一次提出的问题或需求（触发最近一次 planner 规划的用户问题）
-   - 确保总结直接回答用户最近一次的问题
-   - 总结应该与用户最近一次问题的期望和描述保持一致
-
-3. **统一总结输出**：
-   - 将最近一次 planner 发出的任务执行中分散的信息整合成完整的总结
-   - 用自然语言组织内容，使其易于理解
-   - 确保总结逻辑清晰、结构合理
-
-### 总结输出格式
-
-```json
-{
-  "type": "component",
-  "component": "summary-response",
-  "summary": "总结内容，使用自然语言清晰、简洁地总结最近一次 planner 发出的任务的完成情况。"
-}
-```
+当所有任务完成后，输出 summary-response 组件
+`;
 ```
 
 **关键特点**：
-- 使用 `{{systemContext}}` 占位符，运行时会被替换为实际的应用上下文
-- 明确要求输出 JSON 格式
-- 定义了 `needsMorePlanning` 字段，支持多轮规划
-- **总结职责**：当所有任务完成后，Planner 需要总结任务完成情况，使用 `summary-response` 组件输出
+- 使用 `{{businessContext}}` 占位符注入业务上下文
+- 明确输出格式为「必须遵守」
+- 框架约束确保工作流正常运行
 
-### Executor 提示词示例
+### 业务上下文示例（Planner）
+
+**位置**：`src/agents/prompts/planner.md`
 
 ```markdown
-# Executor Agent 提示词
+# Planner 业务上下文
 
-你是一个专业的任务执行专家（Executor），负责完成具体的任务项。
-
-## 系统上下文
-
-{{systemContext}}
-
-## 可用工具
-
-系统会动态为你提供可用的工具。工具的具体名称、描述和参数由系统动态提供，你可以在调用时查看工具的定义。请仔细阅读每个工具的描述，了解其功能和返回值。
-
-## 工具调用去重策略（重要）
-
-**必须严格遵守**：在调用任何 MCP 工具之前，必须先检查对话历史中是否已经调用过相同的工具并获得了结果。
-
-**检查方法**：
-1. **查找工具调用历史**：在对话历史中查找所有 `role: "assistant"` 且包含 `tool_calls` 的消息
-2. **匹配工具名称和参数**：检查是否已有相同工具名称（`tool_calls[].function.name`）和相同参数（`tool_calls[].function.arguments`）的调用
-3. **查找对应的工具结果**：在对话历史中查找 `role: "tool"` 且 `name` 匹配、`tool_call_id` 对应的消息，这些消息的 `content` 就是工具返回的结果
-
-**判断规则**：
-- **如果找到完全匹配的工具调用和结果**：✅ **直接使用已有结果**，不要再次调用工具
-- **如果没有找到匹配的工具调用**：✅ **可以调用工具**获取新结果
-- **如果找到工具调用但结果不完整或错误**：✅ **可以重新调用工具**，但应在响应中说明原因
-
-## 你的职责
-
-### 1. 理解任务
-仔细阅读任务描述，理解需要完成的具体工作。
-
-### 2. 判断任务是否已完成（必须优先执行）
-
-**检查对话历史**：如果对话历史中已经包含了任务要求的结果或信息，且与任务目标完全匹配，则认为任务已完成。
-
-**如果任务已完成**：
-- 立即返回 JSON 响应，不要调用任何工具
-- 将任务状态标记为 `"completed"`
-- summary 简要说明："任务已完成。通过检查对话历史，发现该任务的目标已经在之前的执行过程中完成。"
-
-### 3. 执行任务（仅在任务未完成时）
-
-**重要**：在执行任务时，必须遵循以下步骤：
-
-1. **检查工具调用历史**（必须优先执行）
-   - 在调用任何工具之前，先检查对话历史中是否已有相同工具和参数的调用结果
-   - 如果已有结果，直接使用，不要重复调用工具
-   - 只有在确认对话历史中没有相关结果时，才调用工具
-
-2. **调用工具获取信息**（仅在需要时）
-   - 只有在对话历史中没有找到相关结果时，才调用工具
-   - 调用工具前，先查看工具定义，确保参数正确
-
-3. **分析和处理数据**
-   - 使用从对话历史或工具调用中获得的数据
-   - 进行必要的分析和处理
-
-4. **生成报告或结果**
-   - 基于获得的数据生成报告或结果
-   - 可以多次调用工具（但每次调用前都要检查是否已调用过），直到任务完成
-
-## 输出格式
-
-**重要**：无论任务是否已完成，都必须以 JSON 格式输出结果。
-
-**格式要求**：
-- **必须**输出有效的 JSON 格式，不能输出纯文本或其他格式
-- **必须**包含 `type` 和 `component` 字段
-- **必须**包含 `summary` 字段（即使为空字符串也要包含）
-- **必须**包含 `todos` 字段（即使为空数组也要包含）
-- JSON 必须是完整的、可解析的格式
-
-```json
-{
-  "type": "component",
-  "component": "executor-response",
-  "summary": "任务执行总结，说明执行过程和结果",
-  "taskCompleted": true,
-  "shouldContinue": false,
-  "nextAction": "complete",
-  "todos": [
-    {
-      "id": "task-id-1",
-      "description": "已完成的任务描述",
-      "priority": 1,
-      "status": "completed"
-    },
-    {
-      "id": "task-id-2",
-      "description": "当前正在执行的任务描述",
-      "priority": 2,
-      "status": "executing",
-      "isCurrent": true
-    }
-  ]
-}
-```
-
-### 字段说明
-
-- **`taskCompleted`**：**必须**，布尔值，表示当前任务是否已完成。这是系统判断任务完成的主要依据。
-- **`shouldContinue`**：**可选**，布尔值，表示是否需要继续执行当前任务。
-- **`nextAction`**：**可选**，字符串，表示下一步动作。可选值：`"continue"`（继续执行）、`"complete"`（任务已完成）、`"skip"`（跳过任务）、`"retry"`（重试任务）。
-- **`todos`**：**必须**，任务列表（数组类型）。**必须包含最近一次 planner 响应中的所有任务及其状态**。
-  - **任务来源**：从对话历史中找到最近一次 planner 的响应，获取其 `todos` 数组。
-  - **任务状态更新规则**：根据对话历史确定任务状态（`completed`, `executing`, `pending`, `failed`）
-  - **`isCurrent`**：**可选**，标记当前正在处理的任务（`status: "executing"`）。只有一个任务应该被标记为 `isCurrent: true`。
-
-**流程控制说明**：
-- 系统会优先使用你返回的 `taskCompleted`、`shouldContinue` 和 `nextAction` 字段来控制执行流程
-- 如果这些字段缺失，系统会尝试从 `todos` 数组中当前任务的 `status` 字段推断
-- 系统会保留最大执行轮次限制（10轮）作为兜底机制，防止无限循环
-```
-
-**关键特点**：
-- **工具调用去重策略**：详细说明检查方法和判断规则，避免重复调用
-- **任务完成判断**：优先检查对话历史，如果任务已完成则直接返回，不调用工具
-- **执行优先级**：明确执行步骤，先检查历史，再调用工具
-- **流程控制字段**：通过 `taskCompleted`、`shouldContinue`、`nextAction` 控制执行流程
-- **输出格式要求**：严格要求输出有效的 JSON 格式，包含所有必需字段
-- **提示词逻辑优先**：AI 通过 JSON 响应控制大部分执行逻辑（60-70%），代码主要负责解析和应用（30-40%）
-
-### Verifier 提示词示例
-
-```markdown
-# Verifier Agent 提示词
-
-你是一个专业的任务验收专家（Verifier），负责验证所有任务的完成情况。
-
-## 输出格式
-
-```json
-{
-  "type": "component",
-  "component": "verifier-response",
-  "allCompleted": true,
-  "overallFeedback": "整体完成情况良好",
-  "tasks": [
-    {
-      "id": "task-1",
-      "completed": true,
-      "feedback": "任务完成良好"
-    }
-  ]
-}
-```
-```
-
-**关键特点**：
-- 专注于验证和评估
-- 输出包含每个任务的完成状态和反馈
-- 提供整体评估
-
-### 系统上下文注入
-
-**示例**：在转写管理系统中
-
-```typescript
-const APP_SYSTEM_CONTEXT = `
 你正在一个**转写管理系统**中工作，该系统主要处理：
 
+## 核心概念
+
 - **转写资源（Transcription Resource）**：需要进行转写的音频或视频文件
+  - 音频资源：直接是音频文件
+  - 视频资源：视频文件，系统会自动提取音频进行转写
+  - 每个资源会保存最新一条转写成功的任务 ID
+
 - **转写任务（Transcription Task）**：对转写资源执行转写操作的具体任务
   - 状态：pending、running、completed、failed
-  - 转写完成后会生成转写结果（SRT 字幕文件或 JSON 格式）
-`;
+  - 转写完成后会生成转写结果
 
-const promptManager = new PromptManager();
-promptManager.setSystemContext(APP_SYSTEM_CONTEXT);
+## 业务规则
+
+- 当用户要求分析转写资源时，应该规划同时获取并分析转写内容
+- 转写结果输出策略：默认输出摘要，除非用户明确要求完整内容
 ```
 
-运行时，所有模板中的 `{{systemContext}}` 都会被替换为上述内容。
+**关键特点**：
+- 只包含业务相关的概念和规则
+- 不包含输出格式、框架约束等框架层内容
+- 可以独立于框架进行修改和维护
+
+### PromptManager 使用方式
+
+**位置**：`src/agent-framework/prompts/PromptManager.ts`
+
+```typescript
+import { PromptManager } from './agent-framework/prompts/PromptManager';
+
+const promptManager = new PromptManager();
+
+// 方式 1：为每个 Agent 单独设置业务上下文（推荐）
+promptManager.setBusinessContext('planner', plannerBusinessContext);
+promptManager.setBusinessContext('executor', executorBusinessContext);
+promptManager.setBusinessContext('verifier', verifierBusinessContext);
+
+// 方式 2：批量设置所有 Agent 的业务上下文
+promptManager.setAllBusinessContexts({
+  planner: plannerBusinessContext,
+  executor: executorBusinessContext,
+  verifier: verifierBusinessContext,
+});
+
+// 方式 3：设置默认业务上下文（适用于所有 Agent，向后兼容）
+promptManager.setSystemContext(defaultBusinessContext);
+
+// 获取完整的 system message（框架模板 + 业务上下文）
+const plannerPrompt = promptManager.getPrompt('planner');
+```
 
 ### 提示词定制
 
-#### 1. 覆盖默认模板
+#### 1. 修改业务上下文
+
+直接编辑 `src/agents/prompts/*.md` 文件，无需修改框架代码。
+
+#### 2. 覆盖框架核心模板（高级用法）
 
 ```typescript
-const promptManager = new PromptManager();
-
-// 覆盖 Planner 模板
-promptManager.setTemplate('planner', `
-你是一个自定义的规划专家...
-{{systemContext}}
-...
-`);
+// 只在需要修改框架行为时使用
+promptManager.setCoreTemplate('planner', customPlannerTemplate);
 ```
 
-#### 2. 添加新的 Agent 类型
+#### 3. 添加新的 Agent 类型
 
 ```typescript
 // 1. 扩展 AgentType
 type AgentType = 'planner' | 'executor' | 'verifier' | 'reviewer';
 
-// 2. 添加新模板
-promptManager.setTemplate('reviewer', `
-你是一个代码审查专家...
-{{systemContext}}
-...
-`);
+// 2. 添加核心模板
+promptManager.setCoreTemplate('reviewer', REVIEWER_CORE_TEMPLATE);
 
-// 3. 在 AgentWorkflowEngine 中添加新的执行逻辑
+// 3. 添加业务上下文
+promptManager.setBusinessContext('reviewer', reviewerBusinessContext);
+
+// 4. 在 AgentWorkflowEngine 中添加执行逻辑
 ```
 
 ---
@@ -1590,19 +1458,29 @@ export class MyAgentBackend implements IAgentBackend {
 }
 ```
 
-### 步骤 2：配置系统上下文
+### 步骤 2：配置业务上下文
 
-定义你的应用特定的系统上下文：
+为每个 Agent 定义业务上下文（推荐使用 Markdown 文件）：
 
 ```typescript
-const MY_APP_SYSTEM_CONTEXT = `
+// 方式 1：从 Markdown 文件加载（推荐）
+import plannerContext from './agents/prompts/planner.md?raw';
+import executorContext from './agents/prompts/executor.md?raw';
+import verifierContext from './agents/prompts/verifier.md?raw';
+
+// 方式 2：直接定义字符串
+const MY_PLANNER_CONTEXT = `
+# Planner 业务上下文
+
 你正在一个**我的应用**中工作，该系统主要处理：
+
+## 核心概念
 
 - **资源类型 A**：描述...
 - **资源类型 B**：描述...
-- **操作类型**：描述...
 
-重要规则：
+## 业务规则
+
 - 规则 1
 - 规则 2
 `;
@@ -1619,11 +1497,20 @@ import { MyAgentBackend } from './adapters/MyAgentBackend';
 const backend = new MyAgentBackend();
 const promptManager = new PromptManager();
 
-// 设置系统上下文
-promptManager.setSystemContext(MY_APP_SYSTEM_CONTEXT);
+// 设置业务上下文（推荐为每个 Agent 单独设置）
+promptManager.setBusinessContext('planner', plannerContext);
+promptManager.setBusinessContext('executor', executorContext);
+promptManager.setBusinessContext('verifier', verifierContext);
 
-// 可选：覆盖默认模板
-promptManager.setTemplate('planner', CUSTOM_PLANNER_TEMPLATE);
+// 或者批量设置
+promptManager.setAllBusinessContexts({
+  planner: plannerContext,
+  executor: executorContext,
+  verifier: verifierContext,
+});
+
+// 可选：覆盖框架核心模板（高级用法）
+// promptManager.setCoreTemplate('planner', CUSTOM_PLANNER_TEMPLATE);
 
 // 初始化引擎
 const engine = new AgentWorkflowEngine(backend, promptManager);
@@ -1665,13 +1552,14 @@ async function handleUserRequest(userMessage: string) {
 
 如果需要针对你的应用定制提示词，可以：
 
-1. **修改默认模板**：
-   - 编辑 `src/agent-framework/prompts/templates.ts`
-   - 或使用 `promptManager.setTemplate()` 覆盖
+1. **修改业务上下文**（推荐）：
+   - 编辑 `src/agents/prompts/*.md` 文件
+   - 添加领域知识、业务规则、操作指南
 
-2. **添加应用特定的指导**：
-   - 在系统上下文中添加领域知识
-   - 在模板中添加应用特定的规则
+2. **修改框架核心模板**（高级用法）：
+   - 编辑 `src/agent-framework/prompts/templates.ts`
+   - 或使用 `promptManager.setCoreTemplate()` 覆盖
+   - 注意保留 `{{businessContext}}` 占位符
 
 ### 步骤 6：处理响应（可选）
 
@@ -1703,9 +1591,10 @@ import { AgentWorkflowEngine } from './agent-framework/workflow/AgentWorkflowEng
 import { PromptManager } from './agent-framework/prompts/PromptManager';
 import { MyAgentBackend } from './adapters/MyAgentBackend';
 
-const MY_APP_SYSTEM_CONTEXT = `
-你正在一个**任务管理系统**中工作...
-`;
+// 从 Markdown 文件加载业务上下文
+import plannerContext from './agents/prompts/planner.md?raw';
+import executorContext from './agents/prompts/executor.md?raw';
+import verifierContext from './agents/prompts/verifier.md?raw';
 
 class MyApp {
   private engine: AgentWorkflowEngine;
@@ -1713,7 +1602,13 @@ class MyApp {
   constructor() {
     const backend = new MyAgentBackend();
     const promptManager = new PromptManager();
-    promptManager.setSystemContext(MY_APP_SYSTEM_CONTEXT);
+    
+    // 为每个 Agent 设置业务上下文
+    promptManager.setAllBusinessContexts({
+      planner: plannerContext,
+      executor: executorContext,
+      verifier: verifierContext,
+    });
     
     this.engine = new AgentWorkflowEngine(backend, promptManager);
   }
@@ -1750,15 +1645,16 @@ class MyApp {
 
 ### 最佳实践
 
-1. **系统上下文设计**：
+1. **业务上下文设计**：
    - 清晰描述应用领域和核心概念
    - 说明重要的业务规则和约束
    - 提供工具使用指导
+   - 使用 Markdown 文件便于维护
 
-2. **提示词优化**：
-   - 明确输出格式要求
-   - 强调重要的执行规则（如工具调用去重）
-   - 提供示例输出
+2. **双层架构优势**：
+   - 框架核心模板确保工作流正常运行
+   - 业务上下文独立维护，不影响框架
+   - 修改业务逻辑无需修改框架代码
 
 3. **错误处理**：
    - 实现完善的错误处理逻辑
