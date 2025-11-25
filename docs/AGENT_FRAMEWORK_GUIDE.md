@@ -56,8 +56,9 @@ Planner（总结者）
 3. **工具调用优化**：Executor 会检查对话历史，避免重复调用相同工具
 4. **任务完成判断**：Executor 优先检查对话历史，如果任务已完成则直接返回，提高执行效率
 5. **任务验证机制**：通过 Verifier 确保任务完成质量
-6. **任务总结机制**：Planner 在所有任务完成后，基于执行结果统一总结，满足用户的原始描述
-7. **结构化输出**：所有 Agent 输出标准化的 JSON 格式，便于解析和展示
+6. **任务总结机制**：Verifier 在所有任务完成后直接提供最终总结（`summary` 字段），回答用户问题；如果未完成则提供改进建议（`improvements` 字段）
+7. **改进反馈机制**：Verifier 的改进建议会传递给 Planner，用于下一轮任务规划
+8. **结构化输出**：所有 Agent 输出标准化的 JSON 格式，便于解析和展示
 
 ### 多 Agent 框架 vs 单 Agent 多轮对话 vs 直接问答
 
@@ -187,10 +188,11 @@ Planner（总结者）
    - 验证所有任务完成情况
    - 评估完成质量
 
-4. Summary（如果所有任务完成）
-   - Planner 基于最近一次 planner 发出的任务执行结果
-   - 满足用户的原始描述
-   - 统一总结输出（使用 summary-response 组件）
+4. Verifier 总结（如果所有任务完成）
+   - 验证所有任务完成情况
+   - 评估是否满足用户原始需求
+   - 直接提供最终总结（`summary` 字段），回答用户问题
+   - 如果未完成，提供改进建议（`improvements` 字段）供下一轮规划参考
 ```
 
 #### 2. PromptManager（提示词管理器）
@@ -245,8 +247,8 @@ interface IAgentBackend {
 - `AgentAction`: Agent 行为类型（thinking, planning, calling_tool 等）
 - `Todo`: 任务定义
 - `PlannerResponse`: Planner 响应格式
-- `ExecutorResponse`: Executor 响应格式
-- `VerifierResponse`: Verifier 响应格式
+- `ExecutorResponse`: Executor 响应格式（包含流程控制字段：`taskCompleted`、`shouldContinue`、`nextAction`）
+- `VerifierResponse`: Verifier 响应格式（包含 `summary` 和 `improvements` 字段）
 - `AIMessage`: 消息格式
 
 ### 数据流
@@ -273,11 +275,11 @@ Executor Agent（循环执行每个任务）
 Verifier Agent
    ├─ 调用 chatCompletion()
    ├─ 监听流式响应
-   └─ 解析 VerifierResponse
-   ↓
-Planner Agent（总结）
-   ├─ 调用 chatCompletion()
-   └─ 生成最终总结
+   ├─ 解析 VerifierResponse
+   ├─ 如果 allCompleted && userNeedsSatisfied：
+   │   └─ 返回 summary（最终总结）
+   └─ 如果未完成：
+       └─ 返回 improvements（改进建议）→ 传递给 Planner 进行下一轮规划
    ↓
 返回结果
 ```
@@ -1302,10 +1304,8 @@ export const PLANNER_CORE_TEMPLATE = `
 - 任务应该具体、可执行
 - 避免重复规划
 - 只负责规划，不调用工具
-
-## 总结职责
-
-当所有任务完成后，输出 summary-response 组件
+- 参考 Verifier 的改进建议（improvements）制定新任务
+- 任务完成后的总结由 Verifier 负责
 `;
 ```
 
@@ -1313,6 +1313,51 @@ export const PLANNER_CORE_TEMPLATE = `
 - 使用 `{{businessContext}}` 占位符注入业务上下文
 - 明确输出格式为「必须遵守」
 - 框架约束确保工作流正常运行
+- Planner 需要参考 Verifier 的改进建议
+
+### Verifier 输出格式说明
+
+Verifier 根据任务完成情况输出不同的响应：
+
+**情况一：任务完成，提供最终总结**
+
+当 `allCompleted` 和 `userNeedsSatisfied` 都为 `true` 时：
+
+```json
+{
+  "type": "component",
+  "component": "verifier-response",
+  "allCompleted": true,
+  "userNeedsSatisfied": true,
+  "overallFeedback": "简短的验证结论",
+  "summary": "针对用户问题的详细回答，包含具体数据和结论...",
+  "tasks": [...]
+}
+```
+
+**情况二：任务未完成，提供改进建议**
+
+当 `allCompleted` 或 `userNeedsSatisfied` 为 `false` 时：
+
+```json
+{
+  "type": "component",
+  "component": "verifier-response",
+  "allCompleted": false,
+  "userNeedsSatisfied": false,
+  "overallFeedback": "部分任务未完成，需要进一步改进。",
+  "improvements": [
+    "具体改进建议1：...",
+    "具体改进建议2：..."
+  ],
+  "tasks": [...]
+}
+```
+
+**关键字段说明**：
+- `summary`：最终总结（任务完成时必须提供），直接回答用户问题
+- `improvements`：改进建议数组（任务未完成时必须提供），供 Planner 下一轮规划参考
+- `userNeedsSatisfied`：是否满足用户原始需求
 
 ### 业务上下文示例（Planner）
 
@@ -1684,7 +1729,8 @@ Agent Framework 提供了一个强大的多 Agent 协作框架，通过职责分
 - ✅ **质量保证机制**：Verifier 独立验证任务完成情况
 - ✅ **工具调用优化**：Executor 检查历史，避免重复调用
 - ✅ **任务完成判断优化**：Executor 优先检查对话历史，如果任务已完成则直接返回，提高执行效率
-- ✅ **统一总结机制**：Planner 在所有任务完成后，基于最近一次 planner 发出的任务执行结果，统一总结输出，满足用户的原始描述
+- ✅ **统一总结机制**：Verifier 在任务完成后直接提供 `summary` 最终总结，回答用户问题；未完成时提供 `improvements` 改进建议
+- ✅ **改进反馈机制**：Verifier 的改进建议会传递给 Planner，Planner 会参考这些建议制定下一轮任务规划
 - ✅ **提示词逻辑优先**：AI 通过 JSON 响应控制大部分执行逻辑（60-70%），代码主要负责调用和解析（30-40%）
 - ✅ **灵活的流程控制**：AI 通过 `taskCompleted`、`shouldContinue`、`nextAction` 等字段控制执行流程
 - ✅ **安全的兜底机制**：保留最大轮次限制，防止无限循环
