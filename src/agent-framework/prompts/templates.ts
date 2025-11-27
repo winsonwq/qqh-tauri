@@ -37,13 +37,13 @@ export const PLANNER_CORE_TEMPLATE = `
 当你完成规划后，请按以下混合格式输出：
 
 1. **首先**：直接输出规划总结文本（这部分会实时流式显示给用户）
-2. **然后**：在 \`<data>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
+2. **然后**：在 \`<agent_meta>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
 
 示例：
 
 我已经分析了你的需求，制定了以下执行计划...
 
-<data>
+<agent_meta>
 {
   "type": "component",
   "component": "planner-response",
@@ -57,7 +57,7 @@ export const PLANNER_CORE_TEMPLATE = `
     }
   ]
 }
-</data>
+</agent_meta>
 
 ### 字段说明
 
@@ -68,7 +68,7 @@ export const PLANNER_CORE_TEMPLATE = `
   - \`priority\`: 优先级（数字，1 为最高优先级）
   - \`status\`: 状态（初始为 "pending"）
 
-**重要**：规划总结文本必须放在 \`<data>\` 标签之前，JSON 中不再需要 \`summary\` 字段
+**重要**：规划总结文本必须放在 \`<agent_meta>\` 标签之前，JSON 中不再需要 \`summary\` 字段
 
 ## 框架约束
 
@@ -146,13 +146,13 @@ export const EXECUTOR_CORE_TEMPLATE = `
 **重要**：无论任务是否已完成，都必须按以下混合格式输出：
 
 1. **首先**：直接输出任务执行总结文本（这部分会实时流式显示给用户）
-2. **然后**：在 \`<data>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
+2. **然后**：在 \`<agent_meta>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
 
 示例：
 
 我已经完成了任务的执行，获取到了相关信息...
 
-<data>
+<agent_meta>
 {
   "type": "component",
   "component": "executor-response",
@@ -175,7 +175,7 @@ export const EXECUTOR_CORE_TEMPLATE = `
     }
   ]
 }
-</data>
+</agent_meta>
 
 ### 字段说明
 
@@ -187,7 +187,7 @@ export const EXECUTOR_CORE_TEMPLATE = `
 - **\`todos\`**：**必须**，任务列表数组。必须包含最近一次 planner 响应中的所有任务及其状态。
   - **\`isCurrent\`**：**可选**，标记当前正在处理的任务
 
-**重要**：任务执行总结文本必须放在 \`<data>\` 标签之前，JSON 中不再需要 \`summary\` 字段
+**重要**：任务执行总结文本必须放在 \`<agent_meta>\` 标签之前，JSON 中不再需要 \`summary\` 字段
 
 **流程控制说明**：
 - 系统会优先使用你返回的 \`taskCompleted\`、\`shouldContinue\` 和 \`nextAction\` 字段来控制执行流程
@@ -235,13 +235,13 @@ export const VERIFIER_CORE_TEMPLATE = `
 请按以下混合格式输出：
 
 1. **首先**：直接输出验证总结或最终回答文本（这部分会实时流式显示给用户）
-2. **然后**：在 \`<data>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
+2. **然后**：在 \`<agent_meta>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
 
 ### 情况一：任务完成，提供最终总结
 
 当 \`allCompleted\` 和 \`userNeedsSatisfied\` 都为 \`true\` 时：
 
-**重要**：在 \`<data>\` 标签之前直接输出给用户的最终回答，必须：
+**重要**：在 \`<agent_meta>\` 标签之前直接输出给用户的最终回答，必须：
 - 综合所有任务执行的结果数据
 - 直接回答用户的原始问题
 - 包含具体的信息、数据或结论
@@ -251,7 +251,7 @@ export const VERIFIER_CORE_TEMPLATE = `
 
 根据分析结果，这个资源的转写内容主要包含以下要点...
 
-<data>
+<agent_meta>
 {
   "type": "component",
   "component": "verifier-response",
@@ -266,7 +266,7 @@ export const VERIFIER_CORE_TEMPLATE = `
     }
   ]
 }
-</data>
+</agent_meta>
 
 ### 情况二：任务未完成，提供改进建议
 
@@ -276,7 +276,7 @@ export const VERIFIER_CORE_TEMPLATE = `
 
 部分任务未能完成，需要进一步处理...
 
-<data>
+<agent_meta>
 {
   "type": "component",
   "component": "verifier-response",
@@ -295,7 +295,7 @@ export const VERIFIER_CORE_TEMPLATE = `
     }
   ]
 }
-</data>
+</agent_meta>
 
 ### 字段说明
 
@@ -310,7 +310,7 @@ export const VERIFIER_CORE_TEMPLATE = `
   - 每项包含具体的改进建议
   - 供后续 Planner 参考制定新的任务计划
 
-**重要**：验证总结/最终回答文本必须放在 \`<data>\` 标签之前，JSON 中不再需要 \`summary\` 字段
+**重要**：验证总结/最终回答文本必须放在 \`<agent_meta>\` 标签之前，JSON 中不再需要 \`summary\` 字段
 
 ## 完成标准
 

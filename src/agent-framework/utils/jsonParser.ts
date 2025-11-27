@@ -17,20 +17,20 @@ export interface PartialJsonResult<T> {
 }
 
 /**
- * 从混合内容中提取 <data> 标签内的 JSON 和标签前的文本
+ * 从混合内容中提取 <agent_meta> 标签内的 JSON 和标签前的文本
  */
 function extractFromDataTag(content: string): { textContent: string; jsonContent: string } {
-  // 匹配 <data>...</data> 标签（支持不完整的结束标签，用于流式解析）
-  const dataTagMatch = content.match(/<data>([\s\S]*?)(?:<\/data>|$)/)
+  // 匹配 <agent_meta>...</agent_meta> 标签（支持不完整的结束标签，用于流式解析）
+  const dataTagMatch = content.match(/<agent_meta>([\s\S]*?)(?:<\/agent_meta>|$)/)
   
   if (dataTagMatch) {
-    const dataStartIndex = content.indexOf('<data>')
+    const dataStartIndex = content.indexOf('<agent_meta>')
     const textContent = content.substring(0, dataStartIndex).trim()
     const jsonContent = dataTagMatch[1].trim()
     return { textContent, jsonContent }
   }
   
-  // 如果没有 <data> 标签，返回原始内容
+  // 如果没有 <agent_meta> 标签，返回原始内容
   return { textContent: '', jsonContent: content }
 }
 

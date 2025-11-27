@@ -113,6 +113,14 @@ const findPlannerTodos = (messages: AIMessage[] = []): Todo[] => {
   return []
 }
 
+/**
+ * 过滤掉 <agent_meta> 标签及其内容，用于流式显示时隐藏 JSON 元数据
+ */
+const filterDataTag = (content: string): string => {
+  // 移除 <agent_meta>...</agent_meta> 标签及其内容（包括不完整的结束标签）
+  return content.replace(/<agent_meta>[\s\S]*?(?:<\/agent_meta>|$)/g, '').trim()
+}
+
 // 渲染消息内容
 const renderMessageContent = (
   content: string,
@@ -124,7 +132,8 @@ const renderMessageContent = (
   agentType?: string,
   action?: string,
 ) => {
-  // 检查是否有 JSON 结构（通过检查内容是否包含 JSON 特征来判断）
+  // 检查是否有 <agent_meta> 标签或 JSON 结构
+  const hasDataTag = content.includes('<agent_meta>')
   const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
 
   // 确定要使用的组件
@@ -206,13 +215,16 @@ const renderMessageContent = (
   }
 
   // 如果没有 JSON 结构，使用 markdown 渲染
+  // 过滤掉 <data> 标签内容（如果有的话）
+  const displayContent = hasDataTag ? filterDataTag(content) : content
+  
   return (
     <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={markdownComponents}
       >
-        {content}
+        {displayContent}
       </ReactMarkdown>
       {showCursor && <span className="ai-cursor" />}
     </div>
@@ -233,23 +245,32 @@ const ComponentRendererWrapper: React.FC<{
     // 如果 JSON 结构存在但组件无法渲染，尝试显示原始内容
     // 这样可以避免完全不显示内容的情况
     if (hasJsonStructure) {
-      // 尝试提取 JSON 部分之前的内容作为摘要显示
-      const jsonMatch = rawContent.match(/\{[\s\S]*\}/)
-      if (jsonMatch && jsonMatch.index !== undefined && jsonMatch.index > 0) {
-        // 有 JSON 之前的内容，显示这部分内容
-        const textBeforeJson = rawContent.substring(0, jsonMatch.index).trim()
-        if (textBeforeJson.length > 0) {
-          return (
-            <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={markdownComponents}
-              >
-                {textBeforeJson}
-              </ReactMarkdown>
-            </div>
-          )
+      // 尝试提取 <data> 标签之前的内容或 JSON 部分之前的内容作为摘要显示
+      let textToShow = ''
+      
+      // 优先检查 <agent_meta> 标签
+      const dataTagIndex = rawContent.indexOf('<agent_meta>')
+      if (dataTagIndex > 0) {
+        textToShow = rawContent.substring(0, dataTagIndex).trim()
+      } else {
+        // 否则检查 JSON 之前的内容
+        const jsonMatch = rawContent.match(/\{[\s\S]*\}/)
+        if (jsonMatch && jsonMatch.index !== undefined && jsonMatch.index > 0) {
+          textToShow = rawContent.substring(0, jsonMatch.index).trim()
         }
+      }
+      
+      if (textToShow.length > 0) {
+        return (
+          <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
+              {textToShow}
+            </ReactMarkdown>
+          </div>
+        )
       }
       // 如果没有前面的内容，返回 null（等待更多内容或组件解析）
       return null

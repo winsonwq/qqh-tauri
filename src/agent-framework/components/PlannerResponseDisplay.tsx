@@ -30,8 +30,8 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
 
   const { data, textContent } = parsed
 
-  // 检查是否有 <data> 标签或 JSON 结构
-  const hasDataTag = content.includes('<data>')
+  // 检查是否有 <agent_meta> 标签或 JSON 结构
+  const hasDataTag = content.includes('<agent_meta>')
   const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
 
   // 如果没有 JSON 结构也没有 <data> 标签，可能是纯文本总结
