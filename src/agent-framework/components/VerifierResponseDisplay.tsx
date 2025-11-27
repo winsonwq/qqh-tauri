@@ -24,11 +24,13 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
       return {
         data: null as VerifierResponse | null,
         isValid: false,
+        raw: content,
+        textContent: '',
       }
     }
   }, [content])
 
-  const { data } = parsed
+  const { data, textContent } = parsed
 
   const todos: Todo[] = useMemo(() => {
     if (!data || !data.tasks || !Array.isArray(data.tasks)) {
@@ -85,14 +87,18 @@ const VerifierResponseDisplay: React.FC<VerifierResponseDisplayProps> = ({
     return String(overallFeedback)
   }, [overallFeedback])
 
-  // 获取最终总结（任务完成时由 verifier 提供）
+  // 获取最终总结（优先使用 textContent，其次使用 data.summary）
   const summaryText = useMemo(() => {
+    // 优先使用 <data> 标签前的文本内容
+    if (textContent && textContent.trim()) {
+      return textContent
+    }
     if (!data?.summary) return ''
     if (typeof data.summary === 'string') {
       return data.summary
     }
     return String(data.summary)
-  }, [data?.summary])
+  }, [textContent, data?.summary])
   
   const hasData =
     (overallFeedbackText.trim().length > 0) ||

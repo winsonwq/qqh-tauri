@@ -23,17 +23,19 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
         data: {} as Partial<PlannerResponse>,
         isValid: false,
         raw: content,
+        textContent: '',
       }
     }
   }, [content])
 
-  const { data } = parsed
+  const { data, textContent } = parsed
 
-  // 检查是否有 JSON 结构（通过检查内容是否包含 JSON 特征来判断）
+  // 检查是否有 <data> 标签或 JSON 结构
+  const hasDataTag = content.includes('<data>')
   const hasJsonStructure = content.trim().match(/\{[\s\S]*\}/) !== null
 
-  // 如果没有 JSON 结构，可能是纯文本总结
-  if (!hasJsonStructure && content.trim().length > 0) {
+  // 如果没有 JSON 结构也没有 <data> 标签，可能是纯文本总结
+  if (!hasJsonStructure && !hasDataTag && content.trim().length > 0) {
     return (
       <div className="planner-response stream-json-display">
         <div className="summary-section prose prose-sm max-w-none text-base-content">
@@ -49,7 +51,8 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
   }
 
   // 提取数据字段，使用安全的默认值
-  const summary = data?.summary
+  // 优先使用 textContent（<data> 标签前的文本），其次使用 data.summary
+  const summary = textContent || data?.summary
   const todos = data?.todos
   const needsMorePlanning = data?.needsMorePlanning
 
@@ -69,7 +72,7 @@ const PlannerResponseDisplay: React.FC<PlannerResponseDisplayProps> = ({
 
   return (
     <div className="planner-response stream-json-display space-y-4">
-      {/* 渲染 summary */}
+      {/* 渲染 summary（来自 textContent 或 data.summary） */}
       {summaryText.trim().length > 0 && (
         <div className="summary-section prose prose-sm max-w-none text-base-content">
           <ReactMarkdown

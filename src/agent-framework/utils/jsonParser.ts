@@ -2,6 +2,7 @@
 /**
  * Partial JSON 解析工具
  * 使用 partial-json-parser 库来解析不完整的 JSON 字符串
+ * 支持混合格式：文本内容 + <data>JSON</data>
  */
 
 // @ts-ignore - partial-json-parser 可能没有类型定义
@@ -11,6 +12,26 @@ export interface PartialJsonResult<T> {
   data: Partial<T>
   isValid: boolean
   raw: string
+  /** <data> 标签之前的文本内容 */
+  textContent: string
+}
+
+/**
+ * 从混合内容中提取 <data> 标签内的 JSON 和标签前的文本
+ */
+function extractFromDataTag(content: string): { textContent: string; jsonContent: string } {
+  // 匹配 <data>...</data> 标签（支持不完整的结束标签，用于流式解析）
+  const dataTagMatch = content.match(/<data>([\s\S]*?)(?:<\/data>|$)/)
+  
+  if (dataTagMatch) {
+    const dataStartIndex = content.indexOf('<data>')
+    const textContent = content.substring(0, dataStartIndex).trim()
+    const jsonContent = dataTagMatch[1].trim()
+    return { textContent, jsonContent }
+  }
+  
+  // 如果没有 <data> 标签，返回原始内容
+  return { textContent: '', jsonContent: content }
 }
 
 /**
@@ -75,12 +96,21 @@ function cleanMarkdownCodeBlock(jsonString: string): string {
 
 /**
  * 解析部分 JSON
+ * 支持混合格式：文本内容 + <data>JSON</data>
  */
 export function parsePartialJson<T extends Record<string, any>>(
   jsonString: string,
 ): PartialJsonResult<T> {
   try {
-    let extractedJson = extractJsonFromMixedContent(jsonString)
+    // 首先尝试从 <data> 标签中提取
+    const { textContent, jsonContent } = extractFromDataTag(jsonString)
+    
+    // 如果有 <data> 标签，使用标签内的内容；否则使用传统方式提取
+    let extractedJson = jsonContent
+    if (!textContent && !jsonContent.startsWith('{')) {
+      extractedJson = extractJsonFromMixedContent(jsonString)
+    }
+    
     const cleaned = cleanMarkdownCodeBlock(extractedJson)
     
     if (!cleaned.trim()) {
@@ -88,6 +118,7 @@ export function parsePartialJson<T extends Record<string, any>>(
         data: {} as Partial<T>,
         isValid: false,
         raw: jsonString,
+        textContent,
       }
     }
     
@@ -115,22 +146,29 @@ export function parsePartialJson<T extends Record<string, any>>(
       data: parsed,
       isValid,
       raw: jsonString,
+      textContent,
     }
   } catch (error) {
     try {
-      const extractedJson = extractJsonFromMixedContent(jsonString)
+      const { textContent, jsonContent } = extractFromDataTag(jsonString)
+      let extractedJson = jsonContent
+      if (!textContent && !jsonContent.startsWith('{')) {
+        extractedJson = extractJsonFromMixedContent(jsonString)
+      }
       const cleaned = cleanMarkdownCodeBlock(extractedJson)
       const parsed = partialParse(cleaned) as Partial<T>
       return {
         data: parsed,
         isValid: false,
         raw: jsonString,
+        textContent,
       }
     } catch {
       return {
         data: {} as Partial<T>,
         isValid: false,
         raw: jsonString,
+        textContent: '',
       }
     }
   }

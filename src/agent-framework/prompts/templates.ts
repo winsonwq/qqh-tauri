@@ -34,13 +34,19 @@ export const PLANNER_CORE_TEMPLATE = `
 
 ## 输出格式（必须遵守）
 
-当你完成规划后，请以 JSON 格式输出任务列表：
+当你完成规划后，请按以下混合格式输出：
 
-\`\`\`json
+1. **首先**：直接输出规划总结文本（这部分会实时流式显示给用户）
+2. **然后**：在 \`<data>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
+
+示例：
+
+我已经分析了你的需求，制定了以下执行计划...
+
+<data>
 {
   "type": "component",
   "component": "planner-response",
-  "summary": "规划总结",
   "needsMorePlanning": false,
   "todos": [
     {
@@ -51,7 +57,7 @@ export const PLANNER_CORE_TEMPLATE = `
     }
   ]
 }
-\`\`\`
+</data>
 
 ### 字段说明
 
@@ -61,7 +67,8 @@ export const PLANNER_CORE_TEMPLATE = `
   - \`description\`: 任务描述
   - \`priority\`: 优先级（数字，1 为最高优先级）
   - \`status\`: 状态（初始为 "pending"）
-- \`summary\`: 规划总结，简要说明你的规划思路
+
+**重要**：规划总结文本必须放在 \`<data>\` 标签之前，JSON 中不再需要 \`summary\` 字段
 
 ## 框架约束
 
@@ -136,13 +143,19 @@ export const EXECUTOR_CORE_TEMPLATE = `
 
 ## 输出格式（必须遵守）
 
-**重要**：无论任务是否已完成，都必须以 JSON 格式输出结果。
+**重要**：无论任务是否已完成，都必须按以下混合格式输出：
 
-\`\`\`json
+1. **首先**：直接输出任务执行总结文本（这部分会实时流式显示给用户）
+2. **然后**：在 \`<data>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
+
+示例：
+
+我已经完成了任务的执行，获取到了相关信息...
+
+<data>
 {
   "type": "component",
   "component": "executor-response",
-  "summary": "任务执行总结",
   "taskCompleted": false,
   "shouldContinue": true,
   "nextAction": "continue",
@@ -162,18 +175,19 @@ export const EXECUTOR_CORE_TEMPLATE = `
     }
   ]
 }
-\`\`\`
+</data>
 
 ### 字段说明
 
 - **\`type\`**：**必须**，固定值 \`"component"\`
 - **\`component\`**：**必须**，固定值 \`"executor-response"\`
-- **\`summary\`**：**必须**，任务执行总结（字符串类型）
 - **\`taskCompleted\`**：**必须**，布尔值，表示当前任务是否已完成。这是系统判断任务完成的主要依据。
 - **\`shouldContinue\`**：**可选**，布尔值，表示是否需要继续执行当前任务。
 - **\`nextAction\`**：**可选**，字符串，可选值：\`"continue"\`、\`"complete"\`、\`"skip"\`、\`"retry"\`
 - **\`todos\`**：**必须**，任务列表数组。必须包含最近一次 planner 响应中的所有任务及其状态。
   - **\`isCurrent\`**：**可选**，标记当前正在处理的任务
+
+**重要**：任务执行总结文本必须放在 \`<data>\` 标签之前，JSON 中不再需要 \`summary\` 字段
 
 **流程控制说明**：
 - 系统会优先使用你返回的 \`taskCompleted\`、\`shouldContinue\` 和 \`nextAction\` 字段来控制执行流程
@@ -218,24 +232,32 @@ export const VERIFIER_CORE_TEMPLATE = `
 
 ## 输出格式（必须遵守）
 
+请按以下混合格式输出：
+
+1. **首先**：直接输出验证总结或最终回答文本（这部分会实时流式显示给用户）
+2. **然后**：在 \`<data>\` 标签内输出 JSON 数据（这部分不会直接显示，但会被解析使用）
+
 ### 情况一：任务完成，提供最终总结
 
-当 \`allCompleted\` 和 \`userNeedsSatisfied\` 都为 \`true\` 时，**必须**提供 \`summary\` 字段：
+当 \`allCompleted\` 和 \`userNeedsSatisfied\` 都为 \`true\` 时：
 
-**重要**：\`summary\` 是给用户的最终回答，必须：
+**重要**：在 \`<data>\` 标签之前直接输出给用户的最终回答，必须：
 - 综合所有任务执行的结果数据
 - 直接回答用户的原始问题
 - 包含具体的信息、数据或结论
 - **禁止**只写"任务已完成"之类的空话
 
-\`\`\`json
+示例：
+
+根据分析结果，这个资源的转写内容主要包含以下要点...
+
+<data>
 {
   "type": "component",
   "component": "verifier-response",
   "allCompleted": true,
   "userNeedsSatisfied": true,
   "overallFeedback": "简短的验证结论",
-  "summary": "这里是针对用户问题的详细回答，包含从任务执行中获取的具体数据和结论...",
   "tasks": [
     {
       "id": "task-1",
@@ -244,13 +266,17 @@ export const VERIFIER_CORE_TEMPLATE = `
     }
   ]
 }
-\`\`\`
+</data>
 
 ### 情况二：任务未完成，提供改进建议
 
 当 \`allCompleted\` 或 \`userNeedsSatisfied\` 为 \`false\` 时，必须提供 \`improvements\` 字段：
 
-\`\`\`json
+示例：
+
+部分任务未能完成，需要进一步处理...
+
+<data>
 {
   "type": "component",
   "component": "verifier-response",
@@ -269,7 +295,7 @@ export const VERIFIER_CORE_TEMPLATE = `
     }
   ]
 }
-\`\`\`
+</data>
 
 ### 字段说明
 
@@ -280,16 +306,11 @@ export const VERIFIER_CORE_TEMPLATE = `
   - \`completed\`: 是否完成（true 表示完成，false 表示未完成）
   - \`feedback\`: 反馈意见
 - \`overallFeedback\`: 整体反馈
-- \`summary\`: **最终总结**（当 allCompleted 和 userNeedsSatisfied 都为 true 时**必须提供**）
-  - **必须**直接回答用户的原始问题
-  - **必须**从对话历史中提取任务执行获得的具体数据、信息
-  - **必须**综合这些数据，给出完整、有价值的答案
-  - **禁止**只写"任务已完成"、"需求已满足"等空话
-  - 可以使用 Markdown 格式组织内容（列表、标题、代码块等）
-  - 这是用户最终看到的回答，必须包含用户需要的所有具体信息
 - \`improvements\`: 改进措施数组（当 allCompleted 或 userNeedsSatisfied 为 false 时必填）
   - 每项包含具体的改进建议
   - 供后续 Planner 参考制定新的任务计划
+
+**重要**：验证总结/最终回答文本必须放在 \`<data>\` 标签之前，JSON 中不再需要 \`summary\` 字段
 
 ## 完成标准
 
