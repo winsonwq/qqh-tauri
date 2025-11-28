@@ -41,6 +41,10 @@
     {
       "identifier": "fs:allow-read-file",
       "allow": ["**"]
+    },
+    {
+      "identifier": "fs:allow-stat",
+      "allow": ["**"]
     }
   ]
 }
