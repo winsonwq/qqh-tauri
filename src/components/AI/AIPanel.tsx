@@ -16,11 +16,11 @@ import { AIMessage } from '../../utils/aiMessageUtils'
 import { useMessage } from '../Toast'
 import { useAppSelector } from '../../redux/hooks'
 import { generateSystemMessage } from '../../utils/aiUtils'
+import AutoScrollContainer from '../AutoScrollContainer'
 
 const AIPanel = () => {
   const message = useMessage()
   const [messages, updateMessages, messagesRef] = useStateWithRef<AIMessage[]>([])
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const chatBarRef = useRef<HTMLDivElement | null>(null)
   const [chatBarHeight, setChatBarHeight] = useState(0)
@@ -60,12 +60,6 @@ const AIPanel = () => {
       isInitializedRef.current = true
     }
   }, [initialMessages, updateMessages])
-
-
-  // 自动滚动到底部
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
 
   // 获取 Chat Bar 高度
   useEffect(() => {
@@ -558,7 +552,11 @@ const AIPanel = () => {
       </div>
 
       {/* 消息列表区域 */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+      <AutoScrollContainer
+        ref={scrollContainerRef}
+        shouldAutoScroll={effectiveIsStreaming}
+        className="flex-1 overflow-y-auto"
+      >
         {messages.length === 0 ? (
           <EmptyState />
         ) : (
@@ -583,8 +581,7 @@ const AIPanel = () => {
             })}
           </div>
         )}
-        <div ref={messagesEndRef} />
-      </div>
+      </AutoScrollContainer>
 
       {/* 输入框区域 - 固定在底部 */}
       <div className="flex-shrink-0 p-3">
