@@ -60,138 +60,157 @@ export function generateThoughtPrompt(
   currentTaskId?: string | null,
   tools?: ToolInfo[],
 ): string {
-  const baseSystemMessage = generateSystemMessage(currentResourceId, currentTaskId)
-  
-  const toolsSection = tools && tools.length > 0
-    ? `
+  const baseSystemMessage = generateSystemMessage(
+    currentResourceId,
+    currentTaskId,
+  )
+
+  const toolsSection =
+    tools && tools.length > 0
+      ? `
 
 ## 可用工具
-${tools.map(t => `- ${t.name}: ${t.description}`).join('\n')}`
-    : ''
+${tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')}`
+      : ''
 
   return `${baseSystemMessage}
 ${toolsSection}
 
 ## 当前阶段：思考
 
-你需要分析当前情况，决定下一步应该做什么。
+**你的职责：**
+分析当前情况，决定下一步应该做什么，并判断是否需要继续执行行动。
 
-如果对话历史中有"观察"和"建议"，请参考建议来决定下一步行动。
+**重要说明：**
+- 你与其他阶段（行动、观察）共享同一个对话历史，可以看到所有之前的消息
+- 你可以了解有哪些工具可以调用（见上方的可用工具列表），但**只做思考和安排任务，不做工具调用**
+- 工具调用由行动阶段执行，你只需要在决策中说明需要调用哪个工具
+- **必须输出你的思考过程和决策内容**
+- 如果可以直接回答用户问题，**必须输出完整的回答内容**
+- 如果对话历史中有"观察"和"建议"，请参考建议来决定下一步行动
 
-### 严格输出格式（只能选择以下两种格式之一）
+**关于 shouldContinue 的判断：**
+- shouldContinue: true 表示需要继续执行行动阶段，可能的原因包括：
+  - 需要调用工具获取信息
+  - 需要进一步分析或处理数据
+  - 需要执行多个步骤才能完成任务
+  - 当前信息不足以给出完整回答
+- shouldContinue: false 表示可以直接给出最终回答，可能的原因包括：
+  - 已经收集到足够的信息，可以直接回答用户问题
+  - 任务已经完成，无需进一步操作
+  - 可以直接基于已有信息给出完整回答
 
-**格式1 - 需要继续执行行动：**
+**⚠️ 关键要求：**
+- **无论 shouldContinue 是 true 还是 false，都必须先输出完整的思考过程和回答内容**
+- **禁止只输出 agent_meta 标签而不输出实际内容**
+- 如果 shouldContinue 为 false，说明你已经可以给出完整回答，**必须输出完整的回答内容**
+- agent_meta 标签只是用来告诉系统是否需要继续执行，**不能替代实际的内容输出**
 
-**思考** [你的分析过程]
+### 输出格式（严格执行）
+
+**必须按照以下格式输出，顺序不能改变：**
+
+1. **首先**：输出你的分析过程和决策（必须输出，不能省略）
+2. **然后**：如果可以直接回答用户问题，输出完整的回答内容（如果 shouldContinue 为 false，这是必须的），agent_meta 中的内容属于保密内容，不用在回复中提到。
+3. **最后**：输出 agent_meta 标签
+
+**正确示例（shouldContinue: false）：**
+
+[完整的回答内容，详细说明分析结果和建议]
 
 <agent_meta>
-{"nextAction": "工具名称或analyze", "shouldContinue": true, "reason": "原因"}
+{"shouldContinue": false, "reason": "已经收集到足够信息，可以直接回答"}
 </agent_meta>
 
-**格式2 - 直接回答用户：**
-
-**思考** [简要说明为什么可以回答了]
-
-**回答** [你对用户问题的完整回答]
+**错误示例（禁止这样做）：**
 
 <agent_meta>
-{"nextAction": "answer", "shouldContinue": false, "reason": "原因"}
+{"shouldContinue": false, "reason": "已经收集到足够信息，可以直接回答"}
 </agent_meta>
 
 ### 重要规则
 
-- 只输出"思考"部分，或"思考"+"回答"部分
-- 不要输出"观察"或"建议"
-- 不要输出"行动"
-- 必须以 agent_meta 标签结尾`
+- **必须**先输出分析过程和回答内容，然后才输出 agent_meta 标签
+- **禁止**只输出 agent_meta 标签而不输出实际内容
+- **禁止**跳过内容输出直接输出 agent_meta 标签
+- 如果 shouldContinue 为 false，必须在 agent_meta 之前输出完整的回答
+- 必须以 agent_meta 标签结尾，明确是否需要继续执行行动`
 }
 
 /**
  * 生成 ReAct 行动阶段的系统消息
- * 执行具体的行动（分析或回答）
+ * 执行具体的行动（分析、回答或调用工具）
  */
 export function generateActionPrompt(
-  actionType: string,
   currentResourceId?: string | null,
   currentTaskId?: string | null,
+  tools?: ToolInfo[],
 ): string {
-  const baseSystemMessage = generateSystemMessage(currentResourceId, currentTaskId)
+  const baseSystemMessage = generateSystemMessage(
+    currentResourceId,
+    currentTaskId,
+  )
 
-  if (actionType === 'answer') {
-    return `${baseSystemMessage}
+  const toolsSection =
+    tools && tools.length > 0
+      ? `
+## 可用工具
+${tools.map((t) => `- ${t.name}: ${t.description}`).join('\n')}`
+      : ''
 
-## 当前阶段：行动 - 回答用户
+  return `${baseSystemMessage}${toolsSection}
 
-根据已有信息，直接回答用户的问题。
+## 当前阶段：行动
 
-### 严格输出格式
+**你的职责：**
+分析思考阶段的内容，理解需要执行什么任务，然后执行它。如果需要调用工具来完成任务，请主动调用相应的工具。
 
-**行动** Answer
-[你的回答内容]
+**重要说明：**
+- 你与其他阶段（思考、观察）共享同一个对话历史，可以看到所有之前的消息
+- 仅输出自己职责内应该输出的内容：行动说明和执行结果
 
-### 重要规则
+### 输出格式（严格执行）
 
-- 只输出"行动"部分
-- 不要输出"思考"、"观察"或"建议"`
-  }
+[简要说明正在执行的任务]
 
-  if (actionType === 'analyze') {
-    return `${baseSystemMessage}
-
-## 当前阶段：行动 - 分析
-
-对已有的信息进行分析和总结。
-
-### 严格输出格式
-
-**行动** Analyze
-[你的分析内容]
+如果需要调用工具，请在输出行动说明后调用相应的工具，并输出工具调用的结果。
 
 ### 重要规则
 
-- 只输出"行动"部分
-- 不要输出"思考"、"观察"或"建议"`
-  }
-
-  // 工具调用
-  return `${baseSystemMessage}
-
-## 当前阶段：行动 - 调用工具
-
-你需要调用 ${actionType} 工具来获取信息。
-
-### 严格输出格式
-
-**行动** ${actionType}
-[简要说明正在执行的操作]
-
-然后调用 ${actionType} 工具。
-
-### 重要规则
-
-- 只输出"行动"部分
-- 不要输出"思考"、"观察"或"建议"`
+- 根据思考阶段的内容执行相应的任务，如果需要工具调用请主动调用`
 }
 
 /**
  * 生成 ReAct 观察阶段的系统消息
  * 简短总结工具返回的结果，并给出下一步建议
  */
-export function generateObservationPrompt(): string {
-  return `## 当前阶段：观察
+export function generateObservationPrompt(
+  currentResourceId?: string | null,
+  currentTaskId?: string | null,
+): string {
+  const baseSystemMessage = generateSystemMessage(
+    currentResourceId,
+    currentTaskId,
+  )
 
-请总结工具返回的结果，并给出下一步建议。
+  return `${baseSystemMessage}
 
-### 输出格式（严格按此格式，不要输出其他内容）
+## 当前阶段：观察
 
-**观察** [简短总结结果，1-2句话]
+**你的职责：**
+总结最近 Action 返回的结果，不做最终回答。
 
-**建议（如果有）** [下一步应该做什么]
+**重要说明：**
+- 你与其他阶段（思考、行动）共享同一个对话历史，可以看到所有之前的消息
+- 仅输出自己职责内应该输出的内容：观察和建议
 
-### 重要
+### 输出格式
 
-- 只输出"观察"和"建议"两部分
-- 不要输出"思考"或其他内容
+[一句简短总结工具返回的结果], 如果有建议则输出: [简短描述建议内容]
+
+### 重要规则
+
+- 仅输出"观察"和"建议"两部分
 - 不要开始回答用户问题`
 }
 

@@ -5,7 +5,6 @@ import { ToolCall } from './ToolCallConfirmModal'
 import ToolResultDisplay, { parseToolResultContent } from './ToolResultDisplay'
 import { markdownComponents } from './MarkdownComponents'
 import { AIMessage } from '../../utils/aiMessageUtils'
-import { formatDateTime } from '../../utils/format'
 import { ReasoningSection } from './ReasoningSection'
 import { ToolCallsSection } from './ToolCallsSection'
 import { ToolCallDetailModal } from './ToolCallDetailModal'
@@ -30,7 +29,7 @@ const getMessageContainerClasses = (
   role: 'user' | 'assistant' | 'tool',
   isSticky: boolean,
 ) => {
-  const baseClasses = ''
+  const baseClasses = 'border-b border-base-200'
   if (role === 'user') {
     return `${baseClasses} p-2 bg-gradient-to-b from-base-100 via-base-100 to-transparent ${
       isSticky ? `sticky z-10` : ''
@@ -281,15 +280,6 @@ const ComponentRendererWrapper: React.FC<{
   return rendered
 }
 
-// 渲染时间戳
-const renderTimestamp = (timestamp: Date) => {
-  return (
-    <div className="text-xs text-base-content/40">
-      <span>{formatDateTime(timestamp)}</span>
-    </div>
-  )
-}
-
 export const MessageItem: React.FC<MessageItemProps> = ({
   message,
   isSticky,
@@ -332,8 +322,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       style={isSticky ? { top: 0 } : undefined}
     >
       <div className={getMessageContentClasses(message.role)}>
-        {/* 显示 reasoning/thinking 内容（只在有实际内容时显示） */}
-        {message.reasoning && message.reasoning.trim().length > 0 && (
+        {/* 显示 reasoning/thinking 内容（只在有实际内容时显示，且没有工具调用时） */}
+        {message.reasoning && 
+         message.reasoning.trim().length > 0 && 
+         !message.tool_calls && 
+         !message.pendingToolCalls && (
           <ReasoningSection reasoning={message.reasoning} />
         )}
 
@@ -395,16 +388,15 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           onClose={() => setViewingToolCall(null)}
         />
 
-        {/* 行为标签和时间戳放在同一行 */}
-        <div className="flex items-center gap-2 mt-2">
-          {message.role === 'assistant' && messageAction && (
+        {/* 行为标签 */}
+        {message.role === 'assistant' && messageAction && (
+          <div className="mt-2">
             <AgentActionLabel
               action={messageAction}
               isActive={!!isActionActive}
             />
-          )}
-          {renderTimestamp(message.timestamp)}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

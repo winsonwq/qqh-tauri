@@ -7,11 +7,12 @@ import { useMessage } from '../componets/Toast'
 import { findToolServer, getAvailableTools, areAllDefaultMCPTools } from '../utils/toolUtils'
 import { MCPServerInfo } from '../models'
 import { generateThoughtPrompt, generateActionPrompt, generateObservationPrompt, ToolInfo } from '../utils/aiUtils'
+// @ts-ignore - partial-json-parser 可能没有类型定义
+import partialParse from 'partial-json-parser'
 
 // ReAct Agent 元数据，用于判断是否需要继续执行
 export interface AgentMeta {
   shouldContinue: boolean // 是否需要继续执行
-  nextAction?: string // 下一步行动（工具名、answer、analyze）
   reason?: string // 选择这个行动的原因
 }
 
@@ -20,27 +21,94 @@ export type ReActPhase = 'idle' | 'thought' | 'action' | 'observation'
 
 // 解析 AI 响应中的 agent_meta 标签
 export function parseAgentMeta(content: string): AgentMeta | null {
-  const metaMatch = content.match(/<agent_meta>([\s\S]*?)<\/agent_meta>/)
+  // 支持完整的标签和不完整的标签（用于流式解析）
+  const metaMatch = content.match(/<agent_meta>([\s\S]*?)(?:<\/agent_meta>|$)/)
   if (!metaMatch) {
+    console.log('[parseAgentMeta] 未找到 agent_meta 标签')
     return null
   }
 
   try {
     const metaContent = metaMatch[1].trim()
-    // 尝试解析 JSON 格式
-    if (metaContent.startsWith('{')) {
-      return JSON.parse(metaContent)
+    console.log('[parseAgentMeta] 提取的 meta 内容:', metaContent)
+    
+    // 如果没有内容，返回 null
+    if (!metaContent) {
+      console.log('[parseAgentMeta] meta 内容为空')
+      return null
     }
-    return null
+    
+    // 尝试解析 JSON 格式（支持部分 JSON）
+    if (metaContent.startsWith('{')) {
+      // 先尝试标准 JSON 解析
+      try {
+        const parsed = JSON.parse(metaContent)
+        console.log('[parseAgentMeta] 标准 JSON 解析成功:', parsed)
+        
+        // 验证必要字段
+        if (typeof parsed.shouldContinue === 'boolean') {
+          return {
+            shouldContinue: parsed.shouldContinue,
+            reason: parsed.reason || undefined,
+          }
+        } else {
+          console.warn('[parseAgentMeta] 缺少 shouldContinue 字段，使用默认值')
+          return {
+            shouldContinue: true, // 默认继续执行
+            reason: parsed.reason || undefined,
+          }
+        }
+      } catch (parseError) {
+        // 如果标准解析失败，尝试部分 JSON 解析
+        console.log('[parseAgentMeta] 标准 JSON 解析失败，尝试部分解析:', parseError)
+        try {
+          const parsed = partialParse(metaContent)
+          console.log('[parseAgentMeta] 部分 JSON 解析结果:', parsed)
+          
+          // 验证必要字段
+          if (typeof parsed.shouldContinue === 'boolean') {
+            return {
+              shouldContinue: parsed.shouldContinue,
+              reason: parsed.reason || undefined,
+            }
+          } else {
+            console.warn('[parseAgentMeta] 部分解析结果缺少 shouldContinue 字段，使用默认值')
+            return {
+              shouldContinue: true, // 默认继续执行
+              reason: parsed.reason || undefined,
+            }
+          }
+        } catch (partialError) {
+          console.error('[parseAgentMeta] 部分 JSON 解析也失败:', partialError)
+          // 如果都失败，返回默认值而不是 null
+          console.log('[parseAgentMeta] 返回默认值: shouldContinue=true')
+          return {
+            shouldContinue: true, // 默认继续执行
+            reason: undefined,
+          }
+        }
+      }
+    } else {
+      console.log('[parseAgentMeta] meta 内容不是 JSON 格式（不以 { 开头）')
+      return null
+    }
   } catch (e) {
-    console.error('解析 agent_meta 失败:', e)
-    return null
+    console.error('[parseAgentMeta] 解析过程中出错:', e)
+    // 即使出错，也返回默认值而不是 null
+    return {
+      shouldContinue: true, // 默认继续执行
+      reason: undefined,
+    }
   }
 }
 
-// 从内容中移除 agent_meta 标签
+// 从内容中移除 agent_meta 标签（支持不完整的结束标签）
 export function removeAgentMeta(content: string): string {
-  return content.replace(/<agent_meta>[\s\S]*?<\/agent_meta>/g, '').trim()
+  // 移除完整的标签：<agent_meta>...</agent_meta>
+  let cleaned = content.replace(/<agent_meta>[\s\S]*?<\/agent_meta>/g, '')
+  // 移除不完整的标签（用于流式输出）：<agent_meta>...（没有结束标签）
+  cleaned = cleaned.replace(/<agent_meta>[\s\S]*$/g, '')
+  return cleaned.trim()
 }
 
 interface UseReActAgentOptions {
@@ -258,33 +326,93 @@ export function useReActAgent({
       
       const meta = parseAgentMeta(result.content)
       console.log('[ReAct] 解析的 meta:', meta)
+      
+      // 如果不需要继续，从消息内容中移除 agent_meta 标签，确保用户能看到完整回答
+      if (meta && !meta.shouldContinue) {
+        console.log('[ReAct] 原始内容:', result.content)
+        console.log('[ReAct] 原始内容长度:', result.content.length)
+        
+        const cleanedContent = removeAgentMeta(result.content)
+        console.log('[ReAct] 清理后内容:', cleanedContent)
+        console.log('[ReAct] 清理后内容长度:', cleanedContent.length)
+        
+        // 如果清理后内容为空，说明 AI 只输出了 agent_meta 标签，没有实际内容
+        // 这是不符合要求的，应该记录警告
+        let finalContent = cleanedContent
+        if (!finalContent || finalContent.trim().length === 0) {
+          console.warn('[ReAct] 清理后内容为空，AI 只输出了 agent_meta 标签，没有输出实际内容')
+          console.warn('[ReAct] 这不符合提示词要求，AI 应该先输出思考过程和回答内容')
+          // 保留空内容，让用户看到问题（而不是用 reason 替代）
+          finalContent = ''
+        }
+        
+        // 无论内容是否改变，都更新消息（确保内容正确显示）
+        // 更新消息内容，移除 agent_meta 标签
+        updateMessages((prev) => {
+          // 找到最后一条 assistant 消息（应该是思考阶段的消息）
+          let lastAssistantIndex = -1
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].role === 'assistant') {
+              lastAssistantIndex = i
+              break
+            }
+          }
+          if (lastAssistantIndex >= 0) {
+            const updated = [...prev]
+            updated[lastAssistantIndex] = {
+              ...updated[lastAssistantIndex],
+              content: finalContent,
+            }
+            console.log('[ReAct] 更新消息内容，索引:', lastAssistantIndex, '内容长度:', finalContent.length)
+            return updated
+          }
+          console.warn('[ReAct] 未找到最后一条 assistant 消息')
+          return prev
+        })
+        
+        // 更新数据库中的消息内容
+        const lastAssistantMsg = [...messagesRef.current].reverse().find(
+          (msg) => msg.role === 'assistant'
+        )
+        if (lastAssistantMsg) {
+          await invoke('save_message', {
+            chatId,
+            role: 'assistant',
+            content: finalContent,
+            toolCalls: null,
+            toolCallId: null,
+            name: null,
+            reasoning: null,
+          }).catch((err) => {
+            console.error('更新思考消息失败:', err)
+          })
+          console.log('[ReAct] 已更新数据库中的消息内容')
+        } else {
+          console.warn('[ReAct] 未找到最后一条 assistant 消息用于数据库更新')
+        }
+      }
+      
       return meta
     },
-    [executeAICall, currentResourceId, currentTaskId, mcpServers]
+    [executeAICall, updateMessages, messagesRef, currentResourceId, currentTaskId, mcpServers]
   )
 
   // 阶段2: 行动 - 执行具体行动
   const executeAction = useCallback(
-    async (chatId: string, actionType: string): Promise<{ content: string; toolCalls?: ToolCall[] }> => {
+    async (chatId: string): Promise<{ content: string; toolCalls?: ToolCall[] }> => {
       setCurrentPhase('action')
-      console.log('[ReAct] 阶段2: 行动 -', actionType)
+      console.log('[ReAct] 阶段2: 行动')
       
       const toolInfoList = getToolInfoList(mcpServers)
-      const isToolAction = toolInfoList.some(t => t.name === actionType)
       
-      if (isToolAction) {
-        // 工具调用：传入工具让 AI 调用
-        const systemMessage = generateActionPrompt(actionType, currentResourceId, currentTaskId)
-        console.log('[ReAct] 工具调用 prompt:', systemMessage)
-        const result = await executeAICall(chatId, systemMessage, true)
-        console.log('[ReAct] 工具调用结果 - toolCalls:', result.toolCalls)
-        return result
-      } else {
-        // 非工具行动（answer、analyze）：让 AI 执行
-        const systemMessage = generateActionPrompt(actionType, currentResourceId, currentTaskId)
-        const result = await executeAICall(chatId, systemMessage, false)
-        return result
-      }
+      // 生成通用的行动提示词，让 AI 自己判断行动类型
+      const systemMessage = generateActionPrompt(currentResourceId, currentTaskId, toolInfoList)
+      console.log('[ReAct] 行动 prompt:', systemMessage)
+      
+      // 总是传入工具列表，让 AI 自己判断是否需要调用工具
+      const result = await executeAICall(chatId, systemMessage, toolInfoList.length > 0)
+      console.log('[ReAct] 行动结果 - toolCalls:', result.toolCalls)
+      return result
     },
     [executeAICall, currentResourceId, currentTaskId, mcpServers]
   )
@@ -295,11 +423,13 @@ export function useReActAgent({
       setCurrentPhase('observation')
       console.log('[ReAct] 阶段3: 观察')
       
-      const systemMessage = generateObservationPrompt()
+      const systemMessage = generateObservationPrompt(currentResourceId, currentTaskId)
       const result = await executeAICall(chatId, systemMessage, false)
+      
+      // 直接返回完整内容，不做任何解析和修改
       return result.content
     },
-    [executeAICall]
+    [executeAICall, currentResourceId, currentTaskId]
   )
 
   // ReAct 主循环
@@ -330,8 +460,7 @@ export function useReActAgent({
           }
 
           // 阶段2: 行动 - 执行具体行动
-          const nextAction = thoughtMeta.nextAction || 'answer'
-          const actionResult = await executeAction(chatId, nextAction)
+          const actionResult = await executeAction(chatId)
           
           // 检查是否有工具调用
           if (actionResult.toolCalls && actionResult.toolCalls.length > 0) {
