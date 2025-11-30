@@ -1,9 +1,10 @@
-import { memo, useMemo, useRef, useEffect, useImperativeHandle, forwardRef, useState } from 'react'
+import { memo, useMemo, useRef, useEffect, useImperativeHandle, forwardRef } from 'react'
 import Plyr from 'plyr-react'
 import 'plyr-react/plyr.css'
 import type { Options } from 'plyr'
 import type PlyrInstance from 'plyr'
-import { isUrl, convertToEmbedUrl } from '../utils/urlUtils'
+import { isUrl } from '../utils/urlUtils'
+import IframePlayer, { type IframePlayerRef } from './IframePlayer'
 
 export interface PlayerRef {
   seek: (time: number) => void
@@ -86,34 +87,15 @@ const Player = memo(
     // 检测是否是 URL 资源
     const isUrlResource = useMemo(() => isUrl(src), [src])
     
-    // 如果是 URL 资源，转换为嵌入 URL（初始状态，不包含时间参数，不自动播放）
-    const initialEmbedUrl = useMemo(() => {
-      if (isUrlResource && type === 'video') {
-        return convertToEmbedUrl(src, undefined, false)
-      }
-      return null
-    }, [isUrlResource, src, type])
-    
-    // 使用 state 来存储当前的 embedUrl（可以包含时间参数）
-    const [embedUrl, setEmbedUrl] = useState<string | null>(initialEmbedUrl)
-    
-    // 当 src 改变时，重置 embedUrl
-    useEffect(() => {
-      setEmbedUrl(initialEmbedUrl)
-    }, [initialEmbedUrl])
+    // iframe 播放器引用
+    const iframePlayerRef = useRef<IframePlayerRef>(null)
 
     // 暴露播放器控制方法
     useImperativeHandle(ref, () => ({
       seek: (time: number) => {
         if (isUrlResource && type === 'video') {
-          // URL 资源：通过更新 iframe src 来 seek（添加时间参数和自动播放）
-          // 传入 autoplay=true 使 seek 后自动播放
-          // 注意：不传入 mute，让视频尝试有声音自动播放
-          // 如果浏览器阻止，用户需要手动点击播放
-          const newEmbedUrl = convertToEmbedUrl(src, time, true, false)
-          if (newEmbedUrl) {
-            setEmbedUrl(newEmbedUrl)
-          }
+          // URL 资源：通过 iframe 播放器控制
+          iframePlayerRef.current?.seek(time)
           return
         }
         // 本地文件资源：直接控制播放器
@@ -125,14 +107,14 @@ const Player = memo(
       getCurrentTime: () => {
         // iframe 嵌入的视频无法直接获取时间，返回 0
         if (isUrlResource) {
-          return 0
+          return iframePlayerRef.current?.getCurrentTime() ?? 0
         }
         return plyrInstanceRef.current?.currentTime ?? 0
       },
       onTimeUpdate: (callback: (time: number) => void) => {
         // iframe 嵌入的视频无法监听时间更新，返回空清理函数
         if (isUrlResource) {
-          return () => {}
+          return iframePlayerRef.current?.onTimeUpdate(callback) ?? (() => {})
         }
         timeUpdateCallbacksRef.current.add(callback)
         // 返回清理函数
@@ -140,7 +122,7 @@ const Player = memo(
           timeUpdateCallbacksRef.current.delete(callback)
         }
       },
-    }), [isUrlResource, src, type, setEmbedUrl])
+    }), [isUrlResource, type])
 
     // 监听播放器实例并设置时间更新监听
     useEffect(() => {
@@ -206,55 +188,16 @@ const Player = memo(
       }
     }, [src, type])
 
-    // 如果是 URL 资源（视频），使用 iframe 嵌入
+    // 如果是 URL 资源（视频），使用 iframe 播放器
     if (isUrlResource && type === 'video') {
-      if (embedUrl) {
-        // 有有效的嵌入 URL，使用 iframe
-        // 使用 key 属性确保当 embedUrl 改变时 iframe 会重新加载
-        return (
-          <div className={className}>
-            <div className="relative w-full" style={{ paddingBottom: '56.25%' }}> {/* 16:9 比例 */}
-              <iframe
-                key={embedUrl}
-                src={embedUrl}
-                className="absolute top-0 left-0 w-full h-full"
-                frameBorder="0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                title="视频播放器"
-                referrerPolicy="no-referrer-when-downgrade"
-                onLoad={() => {
-                  // iframe 加载成功
-                  console.log('视频 iframe 加载成功')
-                }}
-                onError={(e) => {
-                  // iframe 加载失败
-                  console.error('视频 iframe 加载失败:', e)
-                }}
-              />
-            </div>
-          </div>
-        )
-      } else {
-        // 无法转换为嵌入 URL，显示提示信息
-        return (
-          <div className={className}>
-            <div className="flex items-center justify-center h-64 bg-base-200 rounded-lg">
-              <div className="text-center">
-                <p className="text-base-content/70 mb-2">无法嵌入此视频链接</p>
-                <a
-                  href={src}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline"
-                >
-                  在新窗口中打开
-                </a>
-              </div>
-            </div>
-          </div>
-        )
-      }
+      return (
+        <IframePlayer
+          ref={iframePlayerRef}
+          src={src}
+          className={className}
+          onError={onError}
+        />
+      )
     }
 
     // 本地文件资源，使用 Plyr
