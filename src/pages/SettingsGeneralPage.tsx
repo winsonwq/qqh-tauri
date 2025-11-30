@@ -812,7 +812,9 @@ const ModelDownloadModal = ({
 const MCPConfigBlock = () => {
   const message = useMessage()
   const dispatch = useAppDispatch()
-  const { servers, loading, error } = useAppSelector((state) => state.mcp)
+  const { servers, loadingState, error } = useAppSelector((state) => state.mcp)
+  const loading = loadingState === 'loading'
+  const refreshing = loadingState === 'refreshing'
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [deletingServer, setDeletingServer] = useState<string | null>(null)
   const [viewingServer, setViewingServer] = useState<MCPServerInfo | null>(null)
@@ -868,10 +870,10 @@ const MCPConfigBlock = () => {
             <button
               className="btn btn-sm btn-ghost"
               onClick={handleRefresh}
-              disabled={loading}
+              disabled={loading || refreshing}
               title="刷新"
             >
-              <HiArrowPath className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              <HiArrowPath className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
               <span className="ml-1">刷新</span>
             </button>
             <button
@@ -895,7 +897,7 @@ const MCPConfigBlock = () => {
             <span className="loading loading-spinner loading-md"></span>
             <span className="ml-2">加载配置列表中...</span>
           </div>
-        ) : servers.length === 0 ? (
+        ) : servers.length === 0 && !refreshing ? (
           <div className="text-center py-8 text-base-content/50">
             <p>暂无 MCP 配置</p>
             <p className="text-sm mt-2">点击【设置】按钮配置 MCP 服务器</p>
@@ -926,6 +928,7 @@ const MCPConfigBlock = () => {
                           enabled,
                         })
                         message.success(enabled ? '已启用' : '已禁用')
+                        // 静默刷新，不显示加载状态
                         await dispatch(refreshMCPConfigs()).unwrap()
                       } catch (err) {
                         const errorMsg = err instanceof Error ? err.message : '操作失败'

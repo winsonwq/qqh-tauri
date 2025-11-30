@@ -2,16 +2,18 @@ import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { invoke } from '@tauri-apps/api/core';
 import { MCPServerInfo } from '../../models';
 
+export type LoadingState = 'idle' | 'loading' | 'refreshing';
+
 export interface MCPState {
   servers: MCPServerInfo[];
-  loading: boolean;
+  loadingState: LoadingState;
   error: string | null;
   lastUpdated: number | null;
 }
 
 const initialState: MCPState = {
   servers: [],
-  loading: false,
+  loadingState: 'idle',
   error: null,
   lastUpdated: null,
 };
@@ -60,32 +62,32 @@ const mcpSlice = createSlice({
     builder
       // loadMCPConfigs
       .addCase(loadMCPConfigs.pending, (state) => {
-        state.loading = true;
+        state.loadingState = 'loading';
         state.error = null;
       })
       .addCase(loadMCPConfigs.fulfilled, (state, action) => {
-        state.loading = false;
+        state.loadingState = 'idle';
         state.servers = action.payload;
         state.lastUpdated = Date.now();
         state.error = null;
       })
       .addCase(loadMCPConfigs.rejected, (state, action) => {
-        state.loading = false;
+        state.loadingState = 'idle';
         state.error = action.payload as string;
       })
       // refreshMCPConfigs
       .addCase(refreshMCPConfigs.pending, (state) => {
-        state.loading = true;
+        state.loadingState = 'refreshing';
         state.error = null;
       })
       .addCase(refreshMCPConfigs.fulfilled, (state, action) => {
-        state.loading = false;
+        state.loadingState = 'idle';
         state.servers = action.payload;
         state.lastUpdated = Date.now();
         state.error = null;
       })
       .addCase(refreshMCPConfigs.rejected, (state, action) => {
-        state.loading = false;
+        state.loadingState = 'idle';
         state.error = action.payload as string;
       });
   },
