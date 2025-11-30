@@ -3,10 +3,12 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { exists } from '@tauri-apps/plugin-fs';
 import {
   ResourceType,
+  SourceType,
   TranscriptionResource,
   TranscriptionTask,
 } from '../../../models';
 import { loadSubtitleFromTasks } from '../../../utils/subtitleUtils';
+import { isUrl } from '../../../utils/urlUtils';
 
 export type MessageApi = {
   success: (content: string, duration?: number) => void;
@@ -65,45 +67,67 @@ const useResourceMedia = ({
         return;
       }
 
-      try {
-        const fileExists = await exists(current.file_path);
-        if (!fileExists) {
-          message.error(`文件不存在: ${current.file_path}`);
+      // 如果是URL资源，直接使用URL，不需要文件存在性检查
+      const isUrlResource = current.source_type === SourceType.URL || isUrl(current.file_path);
+
+      if (!isUrlResource) {
+        // 文件资源：检查文件是否存在
+        try {
+          const fileExists = await exists(current.file_path);
+          if (!fileExists) {
+            message.error(`文件不存在: ${current.file_path}`);
+            clearMedia();
+            return;
+          }
+        } catch (err) {
+          console.error('检查文件失败:', err);
+          message.error(`无法访问文件: ${current.file_path}`);
           clearMedia();
           return;
         }
-      } catch (err) {
-        console.error('检查文件失败:', err);
-        message.error(`无法访问文件: ${current.file_path}`);
-        clearMedia();
-        return;
       }
 
       if (current.resource_type === ResourceType.VIDEO) {
-        const videoPath = createFileSrc(current.file_path);
-        setVideoSrc(videoPath);
-        setAudioSrc(null);
+        // 视频资源
+        if (isUrlResource) {
+          // URL资源：直接使用URL
+          setVideoSrc(current.file_path);
+          setAudioSrc(null);
+        } else {
+          // 文件资源：使用convertFileSrc转换
+          const videoPath = createFileSrc(current.file_path);
+          setVideoSrc(videoPath);
+          setAudioSrc(null);
 
-        if (current.extracted_audio_path) {
-          try {
-            const audioExists = await exists(current.extracted_audio_path);
-            if (audioExists) {
-              const audioPath = createFileSrc(current.extracted_audio_path);
-              setAudioSrc(audioPath);
-            } else {
-              console.warn('提取的音频文件不存在:', current.extracted_audio_path);
+          if (current.extracted_audio_path) {
+            try {
+              const audioExists = await exists(current.extracted_audio_path);
+              if (audioExists) {
+                const audioPath = createFileSrc(current.extracted_audio_path);
+                setAudioSrc(audioPath);
+              } else {
+                console.warn('提取的音频文件不存在:', current.extracted_audio_path);
+              }
+            } catch (err) {
+              console.error('检查提取的音频文件失败:', err);
             }
-          } catch (err) {
-            console.error('检查提取的音频文件失败:', err);
           }
         }
       } else {
-        const audioPath = createFileSrc(current.file_path);
-        if (!audioPath) {
-          message.error('无法创建音频播放器');
+        // 音频资源
+        if (isUrlResource) {
+          // URL资源：直接使用URL
+          setAudioSrc(current.file_path);
+          setVideoSrc(null);
+        } else {
+          // 文件资源：使用convertFileSrc转换
+          const audioPath = createFileSrc(current.file_path);
+          if (!audioPath) {
+            message.error('无法创建音频播放器');
+          }
+          setAudioSrc(audioPath);
+          setVideoSrc(null);
         }
-        setAudioSrc(audioPath);
-        setVideoSrc(null);
       }
     },
     [clearMedia, message]

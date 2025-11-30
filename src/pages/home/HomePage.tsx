@@ -3,11 +3,12 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppDispatch } from '../../redux/hooks';
 import { setCurrentPage } from '../../redux/slices/featureKeysSlice';
-import { TranscriptionResource } from '../../models';
-import { HiPlus, HiDocumentText } from 'react-icons/hi2';
+import { TranscriptionResource, SourceType } from '../../models';
+import { HiPlus, HiDocumentText, HiLink } from 'react-icons/hi2';
 import ResourceCard from './components/ResourceCard';
 import DeleteConfirmModal from '../../components/DeleteConfirmModal';
 import { useMessage } from '../../components/Toast';
+import { isValidUrl, extractResourceNameFromUrl } from '../../utils/urlUtils';
 
 const HomePage = () => {
   const dispatch = useAppDispatch();
@@ -16,6 +17,9 @@ const HomePage = () => {
   const [error, setError] = useState<string | null>(null);
   const [resourceToDelete, setResourceToDelete] = useState<TranscriptionResource | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showUrlModal, setShowUrlModal] = useState(false);
+  const [urlInput, setUrlInput] = useState('');
+  const [urlLoading, setUrlLoading] = useState(false);
   const message = useMessage();
 
   // 加载转写资源列表
@@ -126,6 +130,67 @@ const HomePage = () => {
     dispatch(setCurrentPage({ feature: 'home', page: `resource:${resourceId}` }));
   };
 
+  // 处理URL资源创建
+  const handleCreateUrlResource = async () => {
+    if (!urlInput.trim()) {
+      message.error('请输入URL');
+      return;
+    }
+
+    if (!isValidUrl(urlInput.trim())) {
+      message.error('无效的URL格式，请提供以 http:// 或 https:// 开头的URL');
+      return;
+    }
+
+    try {
+      setUrlLoading(true);
+      setError(null);
+
+      const url = urlInput.trim();
+      
+      // 检查是否已存在相同URL的资源
+      const existingResources = await invoke<TranscriptionResource[]>('get_transcription_resources');
+      const existingResource = existingResources.find(
+        (r) => r.source_type === SourceType.URL && r.file_path === url
+      );
+
+      if (existingResource) {
+        // 如果已存在相同URL的资源，直接打开资源详情页
+        dispatch(setCurrentPage({ feature: 'home', page: `resource:${existingResource.id}` }));
+        setShowUrlModal(false);
+        setUrlInput('');
+        setUrlLoading(false);
+        return;
+      }
+
+      // 从URL提取资源名称
+      const resourceName = extractResourceNameFromUrl(url);
+
+      // 创建新的URL资源
+      const newResource = await invoke<TranscriptionResource>('create_transcription_resource_from_url', {
+        name: resourceName,
+        url: url,
+      });
+
+      // 创建成功后，跳转到资源详情页
+      dispatch(setCurrentPage({ feature: 'home', page: `resource:${newResource.id}` }));
+      
+      // 重新加载资源列表
+      await loadResources();
+      
+      setShowUrlModal(false);
+      setUrlInput('');
+      message.success('URL资源创建成功');
+    } catch (err) {
+      console.error('创建URL资源失败:', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(errorMessage || '创建URL资源失败');
+      message.error(errorMessage || '创建URL资源失败');
+    } finally {
+      setUrlLoading(false);
+    }
+  };
+
   // 删除资源
   const handleDeleteResource = async () => {
     if (!resourceToDelete || isDeleting) return;
@@ -146,29 +211,57 @@ const HomePage = () => {
   return (
     <div className="h-full p-6 space-y-6">
       {/* 操作区域 */}
-      <div className="card card-border bg-base-100 shadow-sm">
-        <div className="card-body">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="card-title">转写资源</h2>
-              <p className="text-base-content/70 mt-1">选择音频或视频文件创建转写资源，支持 MP3、WAV、M4A、MP4、AVI、MOV 等格式</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* 转写资源 Block */}
+        <div className="card card-border bg-base-100 shadow-sm">
+          <div className="card-body">
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <h2 className="card-title">转写资源</h2>
+                <p className="text-base-content/70 mt-1">选择本地音频或视频文件</p>
+              </div>
+              <div className="ml-4">
+                <button
+                  className={`btn btn-primary ${loading ? 'loading' : ''}`}
+                  onClick={handleSelectAudioFile}
+                  disabled={loading}
+                >
+                  <HiPlus className="w-5 h-5" />
+                  {loading ? '处理中...' : '添加文件'}
+                </button>
+              </div>
             </div>
-            <button
-              className={`btn btn-primary ${loading ? 'loading' : ''}`}
-              onClick={handleSelectAudioFile}
-              disabled={loading}
-            >
-              <HiPlus className="w-5 h-5" />
-              {loading ? '处理中...' : '添加资源'}
-            </button>
           </div>
-          {error && (
-            <div className="alert alert-error mt-4">
-              <span>{error}</span>
+        </div>
+
+        {/* 添加 URL Block */}
+        <div className="card card-border bg-base-100 shadow-sm">
+          <div className="card-body">
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <h2 className="card-title">添加 URL</h2>
+                <p className="text-base-content/70 mt-1">添加 YouTube、Bilibili 等视频链接</p>
+              </div>
+              <div className="ml-4">
+                <button
+                  className={`btn btn-outline btn-primary ${urlLoading ? 'loading' : ''}`}
+                  onClick={() => setShowUrlModal(true)}
+                  disabled={urlLoading}
+                >
+                  <HiLink className="w-5 h-5" />
+                  添加URL
+                </button>
+              </div>
             </div>
-          )}
+          </div>
         </div>
       </div>
+
+      {error && (
+        <div className="alert alert-error">
+          <span>{error}</span>
+        </div>
+      )}
 
       {/* 资源列表 */}
       {resources.length === 0 ? (
@@ -204,6 +297,61 @@ const HomePage = () => {
         }}
         confirmLoading={isDeleting}
       />
+
+      {/* URL输入对话框 */}
+      {showUrlModal && (
+        <div className="modal modal-open">
+          <div className="modal-box">
+            <h3 className="font-bold text-lg mb-4">添加URL资源</h3>
+            <p className="text-sm text-base-content/70 mb-4">
+              支持 YouTube、Bilibili 等视频平台的链接。系统将自动获取视频字幕并转换为转写结果。
+            </p>
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text">视频URL</span>
+              </label>
+              <input
+                type="text"
+                placeholder="https://www.youtube.com/watch?v=..."
+                className="input input-bordered w-full"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !urlLoading) {
+                    handleCreateUrlResource();
+                  }
+                }}
+                disabled={urlLoading}
+              />
+            </div>
+            <div className="modal-action">
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setShowUrlModal(false);
+                  setUrlInput('');
+                }}
+                disabled={urlLoading}
+              >
+                取消
+              </button>
+              <button
+                className={`btn btn-primary ${urlLoading ? 'loading' : ''}`}
+                onClick={handleCreateUrlResource}
+                disabled={urlLoading || !urlInput.trim()}
+              >
+                {urlLoading ? '创建中...' : '创建'}
+              </button>
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={() => {
+            if (!urlLoading) {
+              setShowUrlModal(false);
+              setUrlInput('');
+            }
+          }}></div>
+        </div>
+      )}
     </div>
   );
 };

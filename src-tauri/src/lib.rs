@@ -28,14 +28,38 @@ pub enum ResourceType {
     Video,
 }
 
+// 资源来源类型
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum SourceType {
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "url")]
+    Url,
+}
+
+// 视频平台类型
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Platform {
+    #[serde(rename = "youtube")]
+    Youtube,
+    #[serde(rename = "bilibili")]
+    Bilibili,
+    #[serde(rename = "other")]
+    Other,
+}
+
 // 转写资源模型
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TranscriptionResource {
     pub id: String,
     pub name: String,
-    pub file_path: String,
+    pub file_path: String, // 文件地址或URL链接
     #[serde(default = "default_resource_type")]
     pub resource_type: ResourceType,
+    #[serde(default = "default_source_type")]
+    pub source_type: SourceType, // 来源类型：文件或URL（默认为file，保持向后兼容）
+    #[serde(default)]
+    pub platform: Option<Platform>, // 平台类型（仅URL资源有）：youtube、bilibili、other
     #[serde(default)]
     pub extracted_audio_path: Option<String>, // 提取的音频路径（仅视频资源有）
     #[serde(default)]
@@ -47,6 +71,11 @@ pub struct TranscriptionResource {
 // 默认资源类型（用于兼容旧数据）
 fn default_resource_type() -> ResourceType {
     ResourceType::Audio
+}
+
+// 默认来源类型（用于兼容旧数据）
+fn default_source_type() -> SourceType {
+    SourceType::File
 }
 
 // 转写任务模型
@@ -411,6 +440,67 @@ fn get_ffmpeg_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Err("未找到 ffmpeg 可执行文件。请确保工具已正确打包到 tools 目录中。".to_string())
 }
 
+// 获取 yt-dlp 可执行文件路径
+fn get_ytdlp_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    // 首先尝试从 Tauri 资源目录获取（生产环境）
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let path = resource_dir.join("tools/yt-dlp/macos-arm64/yt-dlp");
+        if path.exists() && path.is_file() {
+            return Ok(path);
+        }
+    }
+    
+    // 开发环境：从可执行文件目录向上查找
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("无法获取当前可执行文件路径: {}", e))?;
+    
+    let exe_dir = exe_path.parent()
+        .ok_or("无法获取可执行文件目录")?;
+    
+    // 尝试开发环境的多个可能路径
+    let possible_paths = vec![
+        exe_dir.join("tools/yt-dlp/macos-arm64/yt-dlp"),
+        exe_dir.join("../tools/yt-dlp/macos-arm64/yt-dlp"),
+    ];
+    
+    for path in possible_paths {
+        if path.exists() && path.is_file() {
+            return Ok(path);
+        }
+    }
+    
+    // 如果本地工具目录中没有找到，尝试从系统 PATH 查找
+    let output = std::process::Command::new("which")
+        .arg("yt-dlp")
+        .output();
+    
+    if let Ok(output) = output {
+        if output.status.success() {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path_str.is_empty() {
+                let path = PathBuf::from(path_str);
+                if path.exists() && path.is_file() {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+    
+    // 如果 which 命令失败，尝试直接执行 yt-dlp --version 来检测
+    let check_output = std::process::Command::new("yt-dlp")
+        .arg("--version")
+        .output();
+    
+    if let Ok(output) = check_output {
+        if output.status.success() {
+            // 如果能执行，返回可执行文件名（系统会在 PATH 中查找）
+            return Ok(PathBuf::from("yt-dlp"));
+        }
+    }
+    
+    Err("未找到 yt-dlp。请确保已安装 yt-dlp 并将其添加到系统 PATH 中，或将其放置在 tools/yt-dlp/macos-arm64/ 目录下。可以通过 'brew install yt-dlp' 或 'pip install yt-dlp' 安装。".to_string())
+}
+
 // 辅助函数：读取流并实时发送事件
 fn spawn_stream_reader(
     stream: impl AsyncRead + Send + Unpin + 'static,
@@ -469,8 +559,41 @@ fn spawn_ffmpeg_progress_reader(
     })
 }
 
-// 检测文件类型（根据扩展名）
+// 检测URL平台类型
+fn detect_url_platform(url: &str) -> Option<Platform> {
+    let url_lower = url.to_lowercase();
+    
+    // YouTube 检测
+    if url_lower.contains("youtube.com") || url_lower.contains("youtu.be") {
+        return Some(Platform::Youtube);
+    }
+    
+    // Bilibili 检测
+    if url_lower.contains("bilibili.com") || url_lower.contains("b23.tv") {
+        return Some(Platform::Bilibili);
+    }
+    
+    // 如果看起来是URL但不是已知平台，返回 Other
+    if url_lower.starts_with("http://") || url_lower.starts_with("https://") {
+        return Some(Platform::Other);
+    }
+    
+    None
+}
+
+// 检测是否为URL
+fn is_url(path: &str) -> bool {
+    let path_lower = path.to_lowercase();
+    path_lower.starts_with("http://") || path_lower.starts_with("https://")
+}
+
+// 检测文件类型（根据扩展名或URL）
 fn detect_resource_type(file_path: &str) -> ResourceType {
+    // 如果是URL，默认认为是视频（因为大多数视频平台都是视频）
+    if is_url(file_path) {
+        return ResourceType::Video;
+    }
+    
     let path = PathBuf::from(file_path);
     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
         let ext_lower = ext.to_lowercase();
@@ -503,6 +626,57 @@ async fn create_transcription_resource(
         name,
         file_path,
         resource_type: resource_type.clone(),
+        source_type: SourceType::File, // 文件资源
+        platform: None,
+        extracted_audio_path: None,
+        latest_completed_task_id: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    
+    // 保存到数据库
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    tokio::task::spawn_blocking(move || {
+        let conn = db::init_database(&db_path)
+            .map_err(|e| format!("无法初始化数据库: {}", e))?;
+        db::create_resource(&conn, &resource)
+            .map_err(|e| format!("无法保存资源到数据库: {}", e))?;
+        Ok(resource)
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))?
+}
+
+// 从URL创建转写资源
+#[tauri::command]
+async fn create_transcription_resource_from_url(
+    name: String,
+    url: String,
+    app: tauri::AppHandle,
+) -> Result<TranscriptionResource, String> {
+    // 验证URL格式
+    if !is_url(&url) {
+        return Err("无效的URL格式。请提供以 http:// 或 https:// 开头的URL。".to_string());
+    }
+    
+    // 检测平台类型
+    let platform = detect_url_platform(&url);
+    
+    // 检测资源类型（URL资源默认是视频）
+    let resource_type = ResourceType::Video;
+    
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    
+    let resource = TranscriptionResource {
+        id: id.clone(),
+        name,
+        file_path: url, // URL存储在file_path字段中
+        resource_type,
+        source_type: SourceType::Url,
+        platform,
         extracted_audio_path: None,
         latest_completed_task_id: None,
         created_at: now.clone(),
@@ -629,7 +803,149 @@ async fn execute_transcription_task(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 调用 whisper-cli 进行转写
+    // 如果是URL资源（YouTube），尝试从URL获取字幕（不使用 whisper）
+    if matches!(resource.source_type, SourceType::Url) {
+        // 只处理 YouTube 资源，暂时不考虑 Bilibili
+        let is_youtube = resource.platform.as_ref()
+            .map(|p| matches!(p, Platform::Youtube))
+            .unwrap_or_else(|| {
+                // 如果没有 platform 信息，通过 URL 检测
+                let url_lower = resource.file_path.to_lowercase();
+                url_lower.contains("youtube.com") || url_lower.contains("youtu.be")
+            });
+        
+        if is_youtube {
+            eprintln!("检测到 YouTube URL 资源，使用 yt-dlp 获取字幕...");
+            
+            let output_dir = app_data_dir.join("transcription_results");
+            std::fs::create_dir_all(&output_dir)
+                .map_err(|e| format!("无法创建结果目录: {}", e))?;
+            
+            let output_file = output_dir.join(format!("{}.json", task_id));
+            
+            // 创建事件名称用于发送实时日志
+            let stdout_event_name = format!("transcription-stdout-{}", task_id);
+            let stderr_event_name = format!("transcription-stderr-{}", task_id);
+            
+            // 发送开始消息
+            let _ = app.emit(&stdout_event_name, "检测到 YouTube URL 资源，使用 yt-dlp 获取字幕...\n");
+            
+            // 尝试下载字幕（传入 task_id 以实时发送日志）
+            match download_subtitle_from_url_internal(resource.file_path.clone(), app.clone(), Some(task_id.clone())).await {
+            Ok(srt_path) => {
+                eprintln!("字幕下载成功: {}", srt_path);
+                let _ = app.emit(&stdout_event_name, &format!("字幕下载成功: {}\n", srt_path));
+                
+                // 将SRT转换为JSON
+                let _ = app.emit(&stdout_event_name, "正在将字幕转换为转写结果格式...\n");
+                match convert_srt_to_transcription_json(&PathBuf::from(&srt_path)) {
+                    Ok(json_content) => {
+                        // 保存JSON结果
+                        let _ = app.emit(&stdout_event_name, "正在保存转写结果...\n");
+                        std::fs::write(&output_file, &json_content)
+                            .map_err(|e| format!("无法保存转写结果: {}", e))?;
+                        
+                        // 更新任务状态为完成
+                        task.status = "completed".to_string();
+                        task.result = Some(output_file.to_string_lossy().to_string());
+                        task.completed_at = Some(Utc::now().to_rfc3339());
+                        task.log = Some(format!("从URL成功获取字幕并转换为转写结果\nSRT文件: {}\n", srt_path));
+                        
+                        let _ = app.emit(&stdout_event_name, "转写任务完成！\n");
+                        
+                        let db_path_clone = db_path.clone();
+                        let task_clone = task.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let conn = db::init_database(&db_path_clone)
+                                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                            db::update_task(&conn, &task_clone)
+                                .map_err(|e| format!("无法更新任务: {}", e))
+                        })
+                        .await
+                        .map_err(|e| format!("数据库操作失败: {}", e))??;
+                        
+                        // 更新资源的最新完成任务ID
+                        resource.latest_completed_task_id = Some(task_id.clone());
+                        resource.updated_at = Utc::now().to_rfc3339();
+                        let db_path_clone = db_path.clone();
+                        let resource_clone = resource.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let conn = db::init_database(&db_path_clone)
+                                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                            db::update_resource(&conn, &resource_clone)
+                                .map_err(|e| format!("无法更新资源: {}", e))
+                        })
+                        .await
+                        .map_err(|e| format!("数据库操作失败: {}", e))??;
+                        
+                        return Ok("从URL成功获取字幕并转换为转写结果".to_string());
+                    }
+                    Err(e) => {
+                        eprintln!("SRT转JSON失败: {}", e);
+                        let _ = app.emit(&stderr_event_name, &format!("SRT转JSON失败: {}\n", e));
+                        task.status = "failed".to_string();
+                        task.error = Some(format!("SRT转JSON失败: {}", e));
+                        task.completed_at = Some(Utc::now().to_rfc3339());
+                        
+                        let db_path_clone = db_path.clone();
+                        let task_clone = task.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let conn = db::init_database(&db_path_clone)
+                                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                            db::update_task(&conn, &task_clone)
+                                .map_err(|e| format!("无法更新任务: {}", e))
+                        })
+                        .await
+                        .map_err(|e| format!("数据库操作失败: {}", e))??;
+                        
+                        return Err(format!("SRT转JSON失败: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("字幕下载失败: {}", e);
+                let _ = app.emit(&stderr_event_name, &format!("字幕下载失败: {}\n", e));
+                // 对于URL资源，如果字幕获取失败，返回错误（不尝试whisper转写）
+                task.status = "failed".to_string();
+                task.error = Some(format!("无法从URL获取字幕: {}。请确保视频有字幕且yt-dlp已正确安装。", e));
+                task.completed_at = Some(Utc::now().to_rfc3339());
+                
+                let db_path_clone = db_path.clone();
+                let task_clone = task.clone();
+                tokio::task::spawn_blocking(move || {
+                    let conn = db::init_database(&db_path_clone)
+                        .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                    db::update_task(&conn, &task_clone)
+                        .map_err(|e| format!("无法更新任务: {}", e))
+                })
+                .await
+                .map_err(|e| format!("数据库操作失败: {}", e))??;
+                
+                return Err(format!("无法从URL获取字幕: {}。请确保视频有字幕且yt-dlp已正确安装。", e));
+            }
+            } // 闭合 match 语句
+        } else {
+            // 非 YouTube URL 资源，暂时不支持
+            task.status = "failed".to_string();
+            task.error = Some("暂不支持此类型的 URL 资源。目前仅支持 YouTube 视频。".to_string());
+            task.completed_at = Some(Utc::now().to_rfc3339());
+            
+            let db_path_clone = db_path.clone();
+            let task_clone = task.clone();
+            tokio::task::spawn_blocking(move || {
+                let conn = db::init_database(&db_path_clone)
+                    .map_err(|e| format!("无法初始化数据库: {}", e))?;
+                db::update_task(&conn, &task_clone)
+                    .map_err(|e| format!("无法更新任务: {}", e))
+            })
+            .await
+            .map_err(|e| format!("数据库操作失败: {}", e))??;
+            
+            return Err("暂不支持此类型的 URL 资源。目前仅支持 YouTube 视频。".to_string());
+        }
+    }
+    
+    // 调用 whisper-cli 进行转写（文件资源）
     // 如果是视频资源，使用提取的音频路径；否则使用原始文件路径
     let audio_path = match resource.resource_type {
         ResourceType::Video => {
@@ -1555,6 +1871,11 @@ async fn extract_audio_from_video(
         ResourceType::Video => {
             // 继续处理
         }
+    }
+    
+    // 检查是否是 URL 资源，URL 资源不需要提取音频（会直接使用 yt-dlp 获取字幕）
+    if matches!(resource.source_type, SourceType::Url) || is_url(&resource.file_path) {
+        return Err("URL资源无需提取音频，转写任务会直接使用 yt-dlp 获取字幕".to_string());
     }
     
     // 检查是否已经有提取的音频
@@ -3058,6 +3379,525 @@ async fn save_message(
     message
 }
 
+// 从URL下载字幕（使用yt-dlp）- 内部函数，支持实时日志
+async fn download_subtitle_from_url_internal(
+    url: String,
+    app: tauri::AppHandle,
+    task_id: Option<String>,
+) -> Result<String, String> {
+    // 获取 yt-dlp 路径
+    let ytdlp_path = get_ytdlp_path(&app)?;
+    
+    // 获取应用数据目录
+    let app_data_dir = get_app_data_dir(&app)?;
+    let subtitles_dir = app_data_dir.join("subtitles");
+    std::fs::create_dir_all(&subtitles_dir)
+        .map_err(|e| format!("无法创建字幕目录: {}", e))?;
+    
+    // 生成临时文件名
+    let subtitle_id = Uuid::new_v4().to_string();
+    let srt_file_path = subtitles_dir.join(format!("{}.srt", subtitle_id));
+    
+    // 构建 yt-dlp 命令
+    // yt-dlp --skip-download --write-auto-sub --all-subs --convert-subs srt -o output.srt URL
+    // 注意：--write-auto-sub 下载自动生成的字幕，--all-subs 下载所有可用字幕，--convert-subs srt 转换为 SRT 格式
+    let mut cmd = tokio::process::Command::new(&ytdlp_path);
+    cmd.arg("--skip-download")  // 跳过视频下载
+        .arg("--write-auto-sub")  // 写入自动生成的字幕
+        .arg("--all-subs")  // 下载所有可用的字幕（包括手动和自动）
+        .arg("--convert-subs")  // 转换字幕格式
+        .arg("srt")  // 转换为 SRT 格式
+        .arg("-o")  // 输出文件
+        .arg(&srt_file_path)
+        .arg(&url);
+    
+    // 设置 stdout 和 stderr 为管道
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    
+    // 如果有 task_id，实时发送日志
+    if let Some(ref task_id) = task_id {
+        let stdout_event_name = format!("transcription-stdout-{}", task_id);
+        let stderr_event_name = format!("transcription-stderr-{}", task_id);
+        
+        // 发送开始消息
+        let _ = app.emit(&stdout_event_name, "开始使用 yt-dlp 下载字幕...\n");
+        
+        // 启动进程
+        let mut child = cmd.spawn()
+            .map_err(|e| format!("无法执行 yt-dlp: {}。请确保 yt-dlp 已正确安装。", e))?;
+        
+        // 获取 stdout 和 stderr 的句柄
+        let stdout = child.stdout.take()
+            .ok_or("无法获取 stdout 句柄")?;
+        let stderr = child.stderr.take()
+            .ok_or("无法获取 stderr 句柄")?;
+        
+        // 使用辅助函数并发读取 stdout 和 stderr，实时发送事件
+        let stdout_handle = spawn_stream_reader(
+            stdout,
+            app.clone(),
+            stdout_event_name.clone(),
+            "stdout",
+            false, // 不启用调试日志
+        );
+        
+        let stderr_handle = spawn_stream_reader(
+            stderr,
+            app.clone(),
+            stderr_event_name.clone(),
+            "stderr",
+            false, // 不启用调试日志
+        );
+        
+        // 等待进程完成
+        let status = child.wait().await
+            .map_err(|e| format!("等待 yt-dlp 进程失败: {}", e))?;
+        
+        // 获取 stdout 和 stderr 的输出
+        let stdout_output = stdout_handle.await
+            .map_err(|e| format!("读取 stdout 失败: {}", e))?;
+        let stderr_output = stderr_handle.await
+            .map_err(|e| format!("读取 stderr 失败: {}", e))?;
+        
+        let stderr = stderr_output;
+        let stdout = stdout_output;
+        
+        // 检查文件是否存在（可能是 .srt 或 .vtt 格式）
+        let mut found_file: Option<PathBuf> = None;
+        
+        // 首先检查预期的文件路径
+        if srt_file_path.exists() {
+            found_file = Some(srt_file_path.clone());
+        } else {
+            // 尝试查找生成的文件（yt-dlp 可能会修改文件名，可能是 .srt 或 .vtt）
+            // yt-dlp 可能生成类似 "xxx.srt.zh-Hans.vtt" 的文件名
+            if let Ok(entries) = std::fs::read_dir(&subtitles_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let file_name = path.file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+                    
+                    // 检查文件名是否以 subtitle_id 开头
+                    if file_name.starts_with(&subtitle_id) {
+                        // 检查是否是字幕文件（.srt 或 .vtt 扩展名，或文件名中包含这些扩展名）
+                        let file_name_lower = file_name.to_lowercase();
+                        if file_name_lower.ends_with(".srt") || 
+                           file_name_lower.ends_with(".vtt") ||
+                           file_name_lower.contains(".srt") ||
+                           file_name_lower.contains(".vtt") {
+                            found_file = Some(path);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 如果找到了字幕文件，即使有错误也认为成功
+        if found_file.is_some() {
+            // 文件已生成，继续处理
+            let _ = app.emit(&stdout_event_name, "字幕文件下载成功\n");
+        } else if !status.success() {
+            // 如果命令失败且没有找到文件，才返回错误
+            return Err(format!("yt-dlp 执行失败且未找到字幕文件: {}\n{}", stderr, stdout));
+        }
+        
+        // 使用找到的文件（如果之前找到了）
+        if found_file.is_none() {
+            found_file = Some(srt_file_path.clone());
+        }
+        
+        if let Some(file) = found_file {
+            // 检查是否是 VTT 格式（文件名包含 .vtt）
+            let file_path_str = file.to_string_lossy().to_string();
+            let file_name_lower = file_path_str.to_lowercase();
+            if file_name_lower.ends_with(".vtt") || file_name_lower.contains(".vtt") {
+                // 将 VTT 转换为 SRT
+                let _ = app.emit(&stdout_event_name, "检测到 VTT 格式，正在转换为 SRT...\n");
+                let srt_path = convert_vtt_to_srt(&file)?;
+                let _ = app.emit(&stdout_event_name, "VTT 转换完成\n");
+                return Ok(srt_path);
+            } else {
+                return Ok(file_path_str);
+            }
+        } else {
+            return Err("字幕文件未生成。可能该视频没有字幕，或 yt-dlp 无法访问该视频。".to_string());
+        }
+    } else {
+        // 没有 task_id，使用原来的同步方式
+        // 执行命令
+        let output = cmd.output().await
+            .map_err(|e| format!("无法执行 yt-dlp: {}。请确保 yt-dlp 已正确安装。", e))?;
+        
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        
+        // 即使 yt-dlp 返回非零退出码，也可能已经成功下载了字幕
+        // 先检查文件是否存在，如果文件存在，就认为成功
+        // 检查文件是否存在（可能是 .srt 或 .vtt 格式）
+        let mut found_file: Option<PathBuf> = None;
+        
+        // 首先检查预期的文件路径
+        if srt_file_path.exists() {
+            found_file = Some(srt_file_path.clone());
+        } else {
+            // 尝试查找生成的文件（yt-dlp 可能会修改文件名，可能是 .srt 或 .vtt）
+            // yt-dlp 可能生成类似 "xxx.srt.zh-Hans.vtt" 的文件名
+            if let Ok(entries) = std::fs::read_dir(&subtitles_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let file_name = path.file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+                    
+                    // 检查文件名是否以 subtitle_id 开头
+                    if file_name.starts_with(&subtitle_id) {
+                        // 检查是否是字幕文件（.srt 或 .vtt 扩展名，或文件名中包含这些扩展名）
+                        let file_name_lower = file_name.to_lowercase();
+                        if file_name_lower.ends_with(".srt") || 
+                           file_name_lower.ends_with(".vtt") ||
+                           file_name_lower.contains(".srt") ||
+                           file_name_lower.contains(".vtt") {
+                            found_file = Some(path);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 如果找到了字幕文件，即使有错误也认为成功
+        if found_file.is_some() {
+            // 文件已生成，继续处理
+        } else if !output.status.success() {
+            // 如果命令失败且没有找到文件，才返回错误
+            return Err(format!("yt-dlp 执行失败且未找到字幕文件: {}\n{}", stderr, stdout));
+        }
+        
+        // 使用找到的文件（如果之前找到了）
+        if found_file.is_none() {
+            found_file = Some(srt_file_path.clone());
+        }
+        
+        if let Some(file) = found_file {
+            // 检查是否是 VTT 格式（文件名包含 .vtt）
+            let file_path_str = file.to_string_lossy().to_string();
+            let file_name_lower = file_path_str.to_lowercase();
+            if file_name_lower.ends_with(".vtt") || file_name_lower.contains(".vtt") {
+                // 将 VTT 转换为 SRT
+                let srt_path = convert_vtt_to_srt(&file)?;
+                return Ok(srt_path);
+            } else {
+                return Ok(file_path_str);
+            }
+        } else {
+            return Err("字幕文件未生成。可能该视频没有字幕，或 yt-dlp 无法访问该视频。".to_string());
+        }
+    }
+}
+
+// 从URL下载字幕（使用yt-dlp）- 公开的 Tauri 命令
+#[tauri::command]
+async fn download_subtitle_from_url(
+    url: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    download_subtitle_from_url_internal(url, app, None).await
+}
+
+// 将时间戳转换为秒数（浮点数），支持 SRT (HH:MM:SS,mmm) 和 VTT (HH:MM:SS.mmm) 格式
+fn subtitle_time_to_seconds(time_str: &str) -> Result<f64, String> {
+    // 支持两种格式：
+    // SRT格式: HH:MM:SS,mmm (逗号分隔)
+    // VTT格式: HH:MM:SS.mmm (点分隔)
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!("无效的时间格式: {}", time_str));
+    }
+    
+    let hours: f64 = parts[0].parse()
+        .map_err(|_| format!("无法解析小时: {}", parts[0]))?;
+    let minutes: f64 = parts[1].parse()
+        .map_err(|_| format!("无法解析分钟: {}", parts[1]))?;
+    
+    // 尝试用逗号分隔（SRT格式）
+    let seconds_parts: Vec<&str> = parts[2].split(',').collect();
+    let (seconds_str, milliseconds_str) = if seconds_parts.len() == 2 {
+        (seconds_parts[0], seconds_parts[1])
+    } else {
+        // 尝试用点分隔（VTT格式）
+        let vtt_parts: Vec<&str> = parts[2].split('.').collect();
+        if vtt_parts.len() == 2 {
+            (vtt_parts[0], vtt_parts[1])
+        } else {
+            return Err(format!("无效的秒数格式: {}", parts[2]));
+        }
+    };
+    
+    let seconds: f64 = seconds_str.parse()
+        .map_err(|_| format!("无法解析秒数: {}", seconds_str))?;
+    let milliseconds: f64 = milliseconds_str.parse()
+        .map_err(|_| format!("无法解析毫秒: {}", milliseconds_str))?;
+    
+    Ok(hours * 3600.0 + minutes * 60.0 + seconds + milliseconds / 1000.0)
+}
+
+// 将SRT时间戳转换为秒数（浮点数）- 保持向后兼容
+fn srt_time_to_seconds(time_str: &str) -> Result<f64, String> {
+    subtitle_time_to_seconds(time_str)
+}
+
+// 将秒数转换为时间戳字符串（用于JSON格式）
+fn seconds_to_timestamp(seconds: f64) -> String {
+    let hours = (seconds / 3600.0) as u32;
+    let minutes = ((seconds % 3600.0) / 60.0) as u32;
+    let secs = (seconds % 60.0) as u32;
+    let ms = ((seconds % 1.0) * 1000.0) as u32;
+    
+    format!("{:02}:{:02}:{:02},{:03}", hours, minutes, secs, ms)
+}
+
+// 将 VTT 文件转换为 SRT 文件
+fn convert_vtt_to_srt(vtt_path: &PathBuf) -> Result<String, String> {
+    let content = std::fs::read_to_string(vtt_path)
+        .map_err(|e| format!("无法读取VTT文件: {}", e))?;
+    
+    let lines: Vec<&str> = content.lines().collect();
+    let mut srt_lines: Vec<String> = Vec::new();
+    let mut i = 0;
+    let mut sequence = 1;
+    
+    // 跳过 WEBVTT 头部
+    while i < lines.len() {
+        let line = lines[i].trim();
+        if line == "WEBVTT" || line.starts_with("WEBVTT") {
+            i += 1;
+            // 跳过可能的空行和元数据
+            while i < lines.len() && (lines[i].trim().is_empty() || !lines[i].trim().contains("-->")) {
+                i += 1;
+            }
+            break;
+        }
+        i += 1;
+    }
+    
+    // 解析 VTT 内容
+    while i < lines.len() {
+        // 跳过空行
+        if lines[i].trim().is_empty() {
+            i += 1;
+            continue;
+        }
+        
+        // 读取时间戳行：00:00:00.000 --> 00:00:05.000
+        let time_line = lines[i].trim();
+        if !time_line.contains("-->") {
+            i += 1;
+            continue;
+        }
+        
+        let time_parts: Vec<&str> = time_line.split("-->").collect();
+        if time_parts.len() != 2 {
+            i += 1;
+            continue;
+        }
+        
+        let from_time_str = time_parts[0].trim();
+        let to_time_str = time_parts[1].trim();
+        
+        // 将 VTT 时间格式（点）转换为 SRT 时间格式（逗号）
+        let from_srt = from_time_str.replace('.', ",");
+        let to_srt = to_time_str.replace('.', ",");
+        
+        i += 1;
+        
+        // 读取文本内容（可能有多行）
+        let mut text_lines = Vec::new();
+        while i < lines.len() && !lines[i].trim().is_empty() {
+            let text_line = lines[i].trim();
+            // 跳过 VTT 的样式标记（如 <c>, <b> 等）
+            let clean_text = text_line
+                .replace("<c>", "")
+                .replace("</c>", "")
+                .replace("<b>", "")
+                .replace("</b>", "")
+                .replace("<i>", "")
+                .replace("</i>", "")
+                .replace("<u>", "")
+                .replace("</u>", "");
+            if !clean_text.is_empty() {
+                text_lines.push(clean_text);
+            }
+            i += 1;
+        }
+        
+        let text = text_lines.join(" ").trim().to_string();
+        
+        if text.is_empty() {
+            continue;
+        }
+        
+        // 构建 SRT 格式
+        srt_lines.push(sequence.to_string());
+        srt_lines.push(format!("{} --> {}", from_srt, to_srt));
+        srt_lines.push(text);
+        srt_lines.push(String::new());
+        
+        sequence += 1;
+    }
+    
+    // 创建 SRT 文件
+    let srt_path = vtt_path.with_extension("srt");
+    let srt_content = srt_lines.join("\n");
+    std::fs::write(&srt_path, srt_content)
+        .map_err(|e| format!("无法写入SRT文件: {}", e))?;
+    
+    Ok(srt_path.to_string_lossy().to_string())
+}
+
+// 解析SRT或VTT文件并转换为JSON格式
+fn convert_srt_to_transcription_json(srt_path: &PathBuf) -> Result<String, String> {
+    let content = std::fs::read_to_string(srt_path)
+        .map_err(|e| format!("无法读取字幕文件: {}", e))?;
+    
+    let mut segments: Vec<serde_json::Value> = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+    
+    // 检查是否是 VTT 格式（以 WEBVTT 开头）
+    let is_vtt = lines.iter().any(|line| line.trim().starts_with("WEBVTT"));
+    
+    if is_vtt {
+        // 跳过 WEBVTT 头部
+        while i < lines.len() {
+            let line = lines[i].trim();
+            if line == "WEBVTT" || line.starts_with("WEBVTT") {
+                i += 1;
+                // 跳过可能的空行和元数据
+                while i < lines.len() && (lines[i].trim().is_empty() || !lines[i].trim().contains("-->")) {
+                    i += 1;
+                }
+                break;
+            }
+            i += 1;
+        }
+    }
+    
+    while i < lines.len() {
+        // 跳过空行
+        if lines[i].trim().is_empty() {
+            i += 1;
+            continue;
+        }
+        
+        // 读取序号（SRT格式，VTT格式没有序号）
+        if !is_vtt {
+            while i < lines.len() && lines[i].trim().parse::<u32>().is_ok() {
+                i += 1;
+            }
+        }
+        
+        if i >= lines.len() {
+            break;
+        }
+        
+        // 读取时间戳行：00:00:00,000 --> 00:00:05,000 (SRT) 或 00:00:00.000 --> 00:00:05.000 (VTT)
+        let time_line = lines[i].trim();
+        if !time_line.contains("-->") {
+            i += 1;
+            continue;
+        }
+        
+        let time_parts: Vec<&str> = time_line.split("-->").collect();
+        if time_parts.len() != 2 {
+            i += 1;
+            continue;
+        }
+        
+        let from_time_str = time_parts[0].trim();
+        let to_time_str = time_parts[1].trim();
+        
+        let from_seconds = subtitle_time_to_seconds(from_time_str)
+            .map_err(|e| format!("解析开始时间失败: {}", e))?;
+        let to_seconds = subtitle_time_to_seconds(to_time_str)
+            .map_err(|e| format!("解析结束时间失败: {}", e))?;
+        
+        i += 1;
+        
+        // 读取文本内容（可能有多行）
+        let mut text_lines = Vec::new();
+        while i < lines.len() && !lines[i].trim().is_empty() {
+            let text_line = lines[i].trim();
+            // 如果是 VTT 格式，移除 HTML 标签
+            let clean_text = if is_vtt {
+                text_line
+                    .replace("<c>", "")
+                    .replace("</c>", "")
+                    .replace("<b>", "")
+                    .replace("</b>", "")
+                    .replace("<i>", "")
+                    .replace("</i>", "")
+                    .replace("<u>", "")
+                    .replace("</u>", "")
+            } else {
+                text_line.to_string()
+            };
+            if !clean_text.is_empty() {
+                text_lines.push(clean_text);
+            }
+            i += 1;
+        }
+        
+        let text = text_lines.join(" ").trim().to_string();
+        
+        if text.is_empty() {
+            continue;
+        }
+        
+        // 构建segment
+        let segment = json!({
+            "timestamps": {
+                "from": seconds_to_timestamp(from_seconds),
+                "to": seconds_to_timestamp(to_seconds)
+            },
+            "offsets": {
+                "from": from_seconds,
+                "to": to_seconds
+            },
+            "text": text
+        });
+        
+        segments.push(segment);
+        
+        // 跳过空行
+        while i < lines.len() && lines[i].trim().is_empty() {
+            i += 1;
+        }
+    }
+    
+    // 构建完整的JSON结果
+    let result = json!({
+        "transcription": segments,
+        "result": {
+            "language": "zh"
+        }
+    });
+    
+    serde_json::to_string_pretty(&result)
+        .map_err(|e| format!("无法序列化JSON: {}", e))
+}
+
+// 从SRT文件转换为转写结果JSON
+#[tauri::command]
+async fn convert_srt_to_transcription_json_command(
+    srt_path: String,
+) -> Result<String, String> {
+    let path = PathBuf::from(srt_path);
+    convert_srt_to_transcription_json(&path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3069,6 +3909,7 @@ pub fn run() {
         .manage(RunningStreams::new())
         .invoke_handler(tauri::generate_handler![
             create_transcription_resource,
+            create_transcription_resource_from_url,
             create_transcription_task,
             execute_transcription_task,
             stop_transcription_task,
@@ -3088,6 +3929,8 @@ pub fn run() {
             check_file_exists,
             extract_audio_from_video,
             create_temp_subtitle_file,
+            download_subtitle_from_url,
+            convert_srt_to_transcription_json_command,
             get_ai_configs,
             create_ai_config,
             update_ai_config,

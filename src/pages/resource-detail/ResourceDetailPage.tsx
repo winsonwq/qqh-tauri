@@ -12,7 +12,10 @@ import {
   TranscriptionTaskStatus,
   TranscriptionParams,
   ResourceType,
+  SourceType,
+  Platform,
 } from '../../models';
+import { isUrl } from '../../utils/urlUtils';
 import ResourceInfoCard from './components/ResourceInfoCard';
 import TranscriptionHistory from './components/TranscriptionHistory';
 import LoadingCard from './components/LoadingCard';
@@ -161,10 +164,83 @@ const ResourceDetailPage = () => {
     dispatch(setCurrentPage({ feature: 'home', page: null }));
   };
 
-  // 显示创建任务弹窗
+  // 直接创建并执行任务（用于URL资源，不需要参数配置）
+  const handleCreateTaskDirectly = useCallback(async () => {
+    if (!resourceId) return;
+    try {
+      // 对于 URL 资源，使用默认参数（实际上这些参数不会被使用，因为会直接下载字幕）
+      const defaultParams: TranscriptionParams = {
+        model: 'base', // 不会被使用
+        language: 'zh',
+        word_timestamps: false,
+        translate: false,
+      };
+
+      // 创建任务
+      const task = await invoke<TranscriptionTask>('create_transcription_task', {
+        resourceId: resourceId,
+        params: defaultParams,
+      });
+
+      // 立即切换到新任务并显示 loading
+      setSelectedTaskId(task.id);
+      setResultContent(null);
+      
+      // 重新加载任务列表以获取最新状态
+      await loadTasks(false);
+
+      // 异步执行转写任务（不阻塞 UI）
+      loadTasks(true);
+      
+      // 执行任务（不等待完成）
+      const executePromise = invoke<string>('execute_transcription_task', {
+        taskId: task.id,
+        resourceId: resourceId,
+      });
+      
+      // 任务开始执行后，短延迟刷新以确保状态已更新为 RUNNING
+      setTimeout(() => {
+        loadTasks(true);
+      }, 200);
+      
+      // 等待任务完成
+      executePromise.then(() => {
+        cleanupTaskListeners();
+        loadTasks(true);
+        message.success('字幕下载并转换完成');
+      }).catch((err) => {
+        console.error('执行转写任务失败:', err);
+        message.error(err instanceof Error ? err.message : '执行转写任务失败');
+        cleanupTaskListeners();
+        loadTasks(true);
+      });
+      
+      // 任务完成后重新加载字幕（loadTasks 内部会自动处理）
+    } catch (err) {
+      console.error('创建转写任务失败:', err);
+      message.error(err instanceof Error ? err.message : '创建转写任务失败');
+    }
+  }, [resourceId, setSelectedTaskId, setResultContent, loadTasks, cleanupTaskListeners, message]);
+
+  // 显示创建任务弹窗或直接创建任务（URL资源）
   const handleShowCreateTaskModal = useCallback(() => {
+    // 如果是 URL 资源（特别是 YouTube），直接创建并执行任务，不需要配置参数
+    if (resource?.source_type === SourceType.URL) {
+      // 检查是否是 YouTube
+      const isYoutube = resource.platform === Platform.YOUTUBE || 
+        (resource.file_path.toLowerCase().includes('youtube.com') || 
+         resource.file_path.toLowerCase().includes('youtu.be'));
+      
+      if (isYoutube) {
+        // 直接创建并执行任务，使用默认参数（URL资源不需要这些参数）
+        handleCreateTaskDirectly();
+        return;
+      }
+    }
+    
+    // 文件资源需要配置参数，显示弹窗
     setShowCreateTaskModal(true);
-  }, []);
+  }, [resource, handleCreateTaskDirectly]);
 
   // 删除资源
   const handleDeleteResource = async () => {
@@ -309,7 +385,10 @@ const ResourceDetailPage = () => {
     // resourceExtractionKey 格式: "id:video:none" 或 "id:video:/path/to/audio.wav"
     const isVideoWithoutAudio = resourceExtractionKey.includes(':video:') && resourceExtractionKey.endsWith(':none');
     
-    if (isVideoWithoutAudio) {
+    // 检查是否是 URL 资源，URL 资源不需要提取音频（会直接使用 yt-dlp 获取字幕）
+    const isUrlResource = resource.source_type === SourceType.URL || isUrl(resource.file_path);
+    
+    if (isVideoWithoutAudio && !isUrlResource) {
       // 检查是否已经触发过提取（使用 ref 避免重复触发）
       if (extractionTriggeredRef.current.has(resourceId)) {
         return; // 已经触发过，直接返回
@@ -348,7 +427,10 @@ const ResourceDetailPage = () => {
           }, 500);
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
-          if (errorMessage.includes('音频已提取') || errorMessage.includes('正在进行中')) {
+          if (errorMessage.includes('音频已提取') || 
+              errorMessage.includes('正在进行中') ||
+              errorMessage.includes('URL资源无需提取音频')) {
+            // 这些情况不需要显示错误消息，静默处理
             dispatch(setExtracting({ resourceId, isExtracting: false }));
             setTimeout(() => {
               refreshResource();
@@ -372,10 +454,16 @@ const ResourceDetailPage = () => {
   const canCreateTask = useMemo(() => {
     if (!resource) return true;
     if (resource.resource_type === ResourceType.VIDEO) {
+      // URL 资源不需要提取音频，可以直接创建任务
+      const isUrlResource = resource.source_type === SourceType.URL || isUrl(resource.file_path);
+      if (isUrlResource) {
+        return !isExtracting;
+      }
+      // 文件资源需要先提取音频
       return !!resource.extracted_audio_path && !isExtracting;
     }
     return true;
-  }, [resource?.id, resource?.resource_type, resource?.extracted_audio_path, isExtracting]);
+  }, [resource?.id, resource?.resource_type, resource?.source_type, resource?.file_path, resource?.extracted_audio_path, isExtracting]);
 
   // 稳定 resourceName，避免 resource 对象引用变化导致重新渲染
   const resourceName = useMemo(() => {

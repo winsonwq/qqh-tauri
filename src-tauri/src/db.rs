@@ -1,7 +1,7 @@
 use rusqlite::{Connection, Result as SqlResult, params};
 use std::path::PathBuf;
 use serde_json;
-use crate::{TranscriptionResource, TranscriptionTask, TranscriptionParams, ResourceType, AIConfig, Chat, Message};
+use crate::{TranscriptionResource, TranscriptionTask, TranscriptionParams, ResourceType, SourceType, Platform, AIConfig, Chat, Message};
 
 // 获取数据库路径
 pub fn get_db_path(app_data_dir: &PathBuf) -> PathBuf {
@@ -30,6 +30,18 @@ pub fn init_database(db_path: &PathBuf) -> SqlResult<Connection> {
     // 迁移：如果 transcription_resources 表存在但没有 latest_completed_task_id 字段，则添加
     let _ = conn.execute(
         "ALTER TABLE transcription_resources ADD COLUMN latest_completed_task_id TEXT",
+        [],
+    );
+    
+    // 迁移：添加 source_type 字段（默认为 'file'）
+    let _ = conn.execute(
+        "ALTER TABLE transcription_resources ADD COLUMN source_type TEXT DEFAULT 'file'",
+        [],
+    );
+    
+    // 迁移：添加 platform 字段（可选）
+    let _ = conn.execute(
+        "ALTER TABLE transcription_resources ADD COLUMN platform TEXT",
         [],
     );
     
@@ -156,17 +168,52 @@ fn string_to_resource_type(s: &str) -> ResourceType {
     }
 }
 
+// 来源类型转换
+fn source_type_to_string(source_type: &SourceType) -> String {
+    match source_type {
+        SourceType::File => "file".to_string(),
+        SourceType::Url => "url".to_string(),
+    }
+}
+
+fn string_to_source_type(s: &str) -> SourceType {
+    match s {
+        "url" => SourceType::Url,
+        _ => SourceType::File,
+    }
+}
+
+// 平台类型转换
+fn platform_to_string(platform: &Option<Platform>) -> Option<String> {
+    platform.as_ref().map(|p| match p {
+        Platform::Youtube => "youtube".to_string(),
+        Platform::Bilibili => "bilibili".to_string(),
+        Platform::Other => "other".to_string(),
+    })
+}
+
+fn string_to_platform(s: Option<String>) -> Option<Platform> {
+    s.as_ref().and_then(|s| match s.as_str() {
+        "youtube" => Some(Platform::Youtube),
+        "bilibili" => Some(Platform::Bilibili),
+        "other" => Some(Platform::Other),
+        _ => None,
+    })
+}
+
 // 资源 CRUD 操作
 pub fn create_resource(conn: &Connection, resource: &TranscriptionResource) -> SqlResult<()> {
     conn.execute(
         "INSERT INTO transcription_resources 
-         (id, name, file_path, resource_type, extracted_audio_path, latest_completed_task_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (id, name, file_path, resource_type, source_type, platform, extracted_audio_path, latest_completed_task_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             resource.id,
             resource.name,
             resource.file_path,
             resource_type_to_string(&resource.resource_type),
+            source_type_to_string(&resource.source_type),
+            platform_to_string(&resource.platform),
             resource.extracted_audio_path,
             resource.latest_completed_task_id,
             resource.created_at,
@@ -177,7 +224,34 @@ pub fn create_resource(conn: &Connection, resource: &TranscriptionResource) -> S
 }
 
 pub fn get_resource(conn: &Connection, resource_id: &str) -> SqlResult<Option<TranscriptionResource>> {
-    // 尝试新格式（没有 status 字段）
+    // 尝试最新格式（包含 source_type 和 platform）
+    let stmt = conn.prepare(
+        "SELECT id, name, file_path, resource_type, source_type, platform, extracted_audio_path, latest_completed_task_id, created_at, updated_at
+         FROM transcription_resources WHERE id = ?1"
+    );
+    
+    if let Ok(mut stmt) = stmt {
+        let resource_iter = stmt.query_map(params![resource_id], |row| {
+            Ok(TranscriptionResource {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file_path: row.get(2)?,
+                resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+                source_type: string_to_source_type(&row.get::<_, String>(4)?),
+                platform: string_to_platform(row.get(5)?),
+                extracted_audio_path: row.get(6)?,
+                latest_completed_task_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        })?;
+        
+        for resource in resource_iter {
+            return Ok(Some(resource?));
+        }
+    }
+    
+    // 尝试旧格式（没有 source_type 和 platform）
     let stmt = conn.prepare(
         "SELECT id, name, file_path, resource_type, extracted_audio_path, latest_completed_task_id, created_at, updated_at
          FROM transcription_resources WHERE id = ?1"
@@ -190,6 +264,8 @@ pub fn get_resource(conn: &Connection, resource_id: &str) -> SqlResult<Option<Tr
                 name: row.get(1)?,
                 file_path: row.get(2)?,
                 resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+                source_type: SourceType::File, // 默认值
+                platform: None, // 默认值
                 extracted_audio_path: row.get(4)?,
                 latest_completed_task_id: row.get(5)?,
                 created_at: row.get(6)?,
@@ -202,7 +278,7 @@ pub fn get_resource(conn: &Connection, resource_id: &str) -> SqlResult<Option<Tr
         }
     }
     
-    // 如果新格式失败，尝试旧格式（有 status 字段，但忽略它）
+    // 如果新格式失败，尝试更旧的格式（有 status 字段，但忽略它）
     let mut stmt = conn.prepare(
         "SELECT id, name, file_path, resource_type, extracted_audio_path, status, latest_completed_task_id, created_at, updated_at
          FROM transcription_resources WHERE id = ?1"
@@ -214,6 +290,8 @@ pub fn get_resource(conn: &Connection, resource_id: &str) -> SqlResult<Option<Tr
             name: row.get(1)?,
             file_path: row.get(2)?,
             resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+            source_type: SourceType::File, // 默认值
+            platform: None, // 默认值
             extracted_audio_path: row.get(4)?,
             latest_completed_task_id: row.get(6)?, // 跳过 status (5)
             created_at: row.get(7)?,
@@ -228,7 +306,37 @@ pub fn get_resource(conn: &Connection, resource_id: &str) -> SqlResult<Option<Tr
 }
 
 pub fn get_all_resources(conn: &Connection) -> SqlResult<Vec<TranscriptionResource>> {
-    // 尝试新格式（没有 status 字段）
+    // 尝试最新格式（包含 source_type 和 platform）
+    let stmt = conn.prepare(
+        "SELECT id, name, file_path, resource_type, source_type, platform, extracted_audio_path, latest_completed_task_id, created_at, updated_at
+         FROM transcription_resources
+         ORDER BY created_at DESC"
+    );
+    
+    if let Ok(mut stmt) = stmt {
+        let resource_iter = stmt.query_map([], |row| {
+            Ok(TranscriptionResource {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file_path: row.get(2)?,
+                resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+                source_type: string_to_source_type(&row.get::<_, String>(4)?),
+                platform: string_to_platform(row.get(5)?),
+                extracted_audio_path: row.get(6)?,
+                latest_completed_task_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        })?;
+        
+        let mut resources = Vec::new();
+        for resource in resource_iter {
+            resources.push(resource?);
+        }
+        return Ok(resources);
+    }
+    
+    // 尝试旧格式（没有 source_type 和 platform）
     let stmt = conn.prepare(
         "SELECT id, name, file_path, resource_type, extracted_audio_path, latest_completed_task_id, created_at, updated_at
          FROM transcription_resources
@@ -242,6 +350,8 @@ pub fn get_all_resources(conn: &Connection) -> SqlResult<Vec<TranscriptionResour
                 name: row.get(1)?,
                 file_path: row.get(2)?,
                 resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+                source_type: SourceType::File, // 默认值
+                platform: None, // 默认值
                 extracted_audio_path: row.get(4)?,
                 latest_completed_task_id: row.get(5)?,
                 created_at: row.get(6)?,
@@ -256,7 +366,7 @@ pub fn get_all_resources(conn: &Connection) -> SqlResult<Vec<TranscriptionResour
         return Ok(resources);
     }
     
-    // 如果新格式失败，尝试旧格式（有 status 字段，但忽略它）
+    // 如果新格式失败，尝试更旧的格式（有 status 字段，但忽略它）
     let mut stmt = conn.prepare(
         "SELECT id, name, file_path, resource_type, extracted_audio_path, status, latest_completed_task_id, created_at, updated_at
          FROM transcription_resources
@@ -269,6 +379,8 @@ pub fn get_all_resources(conn: &Connection) -> SqlResult<Vec<TranscriptionResour
             name: row.get(1)?,
             file_path: row.get(2)?,
             resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+            source_type: SourceType::File, // 默认值
+            platform: None, // 默认值
             extracted_audio_path: row.get(4)?,
             latest_completed_task_id: row.get(6)?, // 跳过 status (5)
             created_at: row.get(7)?,
@@ -285,7 +397,38 @@ pub fn get_all_resources(conn: &Connection) -> SqlResult<Vec<TranscriptionResour
 
 pub fn search_resources(conn: &Connection, keyword: &str) -> SqlResult<Vec<TranscriptionResource>> {
     let search_pattern = format!("%{}%", keyword);
-    // 尝试新格式（没有 status 字段）
+    // 尝试最新格式（包含 source_type 和 platform）
+    let stmt = conn.prepare(
+        "SELECT id, name, file_path, resource_type, source_type, platform, extracted_audio_path, latest_completed_task_id, created_at, updated_at
+         FROM transcription_resources
+         WHERE name LIKE ?1 OR file_path LIKE ?1
+         ORDER BY created_at DESC"
+    );
+    
+    if let Ok(mut stmt) = stmt {
+        let resource_iter = stmt.query_map(params![search_pattern], |row| {
+            Ok(TranscriptionResource {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file_path: row.get(2)?,
+                resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+                source_type: string_to_source_type(&row.get::<_, String>(4)?),
+                platform: string_to_platform(row.get(5)?),
+                extracted_audio_path: row.get(6)?,
+                latest_completed_task_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        })?;
+        
+        let mut resources = Vec::new();
+        for resource in resource_iter {
+            resources.push(resource?);
+        }
+        return Ok(resources);
+    }
+    
+    // 尝试旧格式（没有 source_type 和 platform）
     let stmt = conn.prepare(
         "SELECT id, name, file_path, resource_type, extracted_audio_path, latest_completed_task_id, created_at, updated_at
          FROM transcription_resources
@@ -300,6 +443,8 @@ pub fn search_resources(conn: &Connection, keyword: &str) -> SqlResult<Vec<Trans
                 name: row.get(1)?,
                 file_path: row.get(2)?,
                 resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+                source_type: SourceType::File, // 默认值
+                platform: None, // 默认值
                 extracted_audio_path: row.get(4)?,
                 latest_completed_task_id: row.get(5)?,
                 created_at: row.get(6)?,
@@ -314,7 +459,7 @@ pub fn search_resources(conn: &Connection, keyword: &str) -> SqlResult<Vec<Trans
         return Ok(resources);
     }
     
-    // 如果新格式失败，尝试旧格式（有 status 字段，但忽略它）
+    // 如果新格式失败，尝试更旧的格式（有 status 字段，但忽略它）
     let mut stmt = conn.prepare(
         "SELECT id, name, file_path, resource_type, extracted_audio_path, status, latest_completed_task_id, created_at, updated_at
          FROM transcription_resources
@@ -328,6 +473,8 @@ pub fn search_resources(conn: &Connection, keyword: &str) -> SqlResult<Vec<Trans
             name: row.get(1)?,
             file_path: row.get(2)?,
             resource_type: string_to_resource_type(&row.get::<_, String>(3)?),
+            source_type: SourceType::File, // 默认值
+            platform: None, // 默认值
             extracted_audio_path: row.get(4)?,
             latest_completed_task_id: row.get(6)?, // 跳过 status (5)
             created_at: row.get(7)?,
@@ -343,7 +490,30 @@ pub fn search_resources(conn: &Connection, keyword: &str) -> SqlResult<Vec<Trans
 }
 
 pub fn update_resource(conn: &Connection, resource: &TranscriptionResource) -> SqlResult<()> {
-    // 尝试新格式（没有 status 字段）
+    // 尝试最新格式（包含 source_type 和 platform）
+    let result = conn.execute(
+        "UPDATE transcription_resources
+         SET name = ?2, file_path = ?3, resource_type = ?4, source_type = ?5, platform = ?6,
+             extracted_audio_path = ?7, latest_completed_task_id = ?8, updated_at = ?9
+         WHERE id = ?1",
+        params![
+            resource.id,
+            resource.name,
+            resource.file_path,
+            resource_type_to_string(&resource.resource_type),
+            source_type_to_string(&resource.source_type),
+            platform_to_string(&resource.platform),
+            resource.extracted_audio_path,
+            resource.latest_completed_task_id,
+            resource.updated_at,
+        ],
+    );
+    
+    if result.is_ok() {
+        return Ok(());
+    }
+    
+    // 如果新格式失败，尝试旧格式（没有 source_type 和 platform）
     let result = conn.execute(
         "UPDATE transcription_resources
          SET name = ?2, file_path = ?3, resource_type = ?4, extracted_audio_path = ?5,
@@ -364,7 +534,7 @@ pub fn update_resource(conn: &Connection, resource: &TranscriptionResource) -> S
         return Ok(());
     }
     
-    // 如果新格式失败，尝试旧格式（有 status 字段，但设置为空值）
+    // 如果还是失败，尝试更旧的格式（有 status 字段，但忽略它）
     conn.execute(
         "UPDATE transcription_resources
          SET name = ?2, file_path = ?3, resource_type = ?4, extracted_audio_path = ?5,
