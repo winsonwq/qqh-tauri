@@ -34,7 +34,7 @@ const ResourceInfoCard = memo(({
   }, [isVideo, resource.id, videoSrc, audioSrc])
 
   return (
-    <div className="h-full flex flex-col p-6">
+    <div className="h-full flex flex-col p-4">
       {/* 视频/音频预览 */}
       <div className="mb-4 pb-4 border-b border-base-300">
         {isVideo ? (

@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { parsePartialJson } from '../utils/jsonParser'
 import { VerifierResponse, Todo } from '../core/types'
-import { markdownComponents } from './MarkdownComponents'
+import { markdownComponents } from '../../components/AI/MarkdownComponents'
 import TodoList from './TodoList'
 
 export interface VerifierResponseDisplayProps {

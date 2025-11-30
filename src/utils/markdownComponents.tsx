@@ -1,16 +1,10 @@
 import React from 'react'
 
-// Simple table component instead of depending on OptimizedTable
-const SimpleTable: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="overflow-x-auto">
-    <table className="table w-full text-left border-collapse border border-base-300">
-      {children}
-    </table>
-  </div>
-)
-
-// Markdown 组件配置 - 共用样式
-export const markdownComponents = {
+// 创建 markdown 组件配置的工厂函数
+// 允许自定义表格组件
+export const createMarkdownComponents = (
+  TableComponent: React.FC<{ children: React.ReactNode }>,
+) => ({
   p: ({ children }: { children?: React.ReactNode }) => (
     <p className="mb-2 last:mb-0">{children}</p>
   ),
@@ -85,7 +79,7 @@ export const markdownComponents = {
     <em className="italic">{children}</em>
   ),
   table: ({ children }: { children?: React.ReactNode }) => (
-    <SimpleTable>{children}</SimpleTable>
+    <TableComponent>{children}</TableComponent>
   ),
   thead: ({ children }: { children?: React.ReactNode }) => (
     <thead className="bg-base-200">{children}</thead>
@@ -106,5 +100,5 @@ export const markdownComponents = {
       {children}
     </td>
   ),
-}
+})
 

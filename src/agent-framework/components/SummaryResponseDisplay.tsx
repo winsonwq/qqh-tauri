@@ -2,7 +2,7 @@ import React, { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { parsePartialJson } from '../utils/jsonParser'
-import { markdownComponents } from './MarkdownComponents'
+import { markdownComponents } from '../../components/AI/MarkdownComponents'
 
 interface SummaryResponse {
   type?: 'component'
