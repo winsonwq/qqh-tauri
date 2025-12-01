@@ -5,6 +5,18 @@ import { ComponentProps, ComponentRenderer } from '../ComponentRegistry'
 import { parsePartialJson } from '../../../utils/partialJsonParser'
 import { markdownComponents } from '../MarkdownComponents'
 
+/**
+ * 过滤掉 <agent_meta> 标签及其内容
+ */
+const filterAgentMeta = (content: string): string => {
+  if (!content) return ''
+  // 移除完整的标签：<agent_meta>...</agent_meta>
+  let cleaned = content.replace(/<agent_meta>[\s\S]*?<\/agent_meta>/gi, '')
+  // 移除不完整的标签（用于流式输出）：<agent_meta>...（没有结束标签）
+  cleaned = cleaned.replace(/<agent_meta>[\s\S]*$/gi, '')
+  return cleaned.trim()
+}
+
 // 字段渲染配置类型
 type FieldRenderConfig =
   | {
@@ -254,6 +266,11 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
         if (!config.data || typeof config.data !== 'string' || config.data.trim().length === 0) {
           return null
         }
+        // 过滤掉 agent_meta 标签
+        const cleanedData = filterAgentMeta(config.data)
+        if (!cleanedData || cleanedData.trim().length === 0) {
+          return null
+        }
         return (
           <div
             key={fieldName}
@@ -263,7 +280,7 @@ const StreamJsonDisplay: React.FC<StreamJsonDisplayProps> = ({ props }) => {
               remarkPlugins={[remarkGfm]}
               components={markdownComponents}
             >
-              {config.data}
+              {cleanedData}
             </ReactMarkdown>
           </div>
         )

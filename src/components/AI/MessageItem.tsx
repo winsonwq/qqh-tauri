@@ -116,8 +116,12 @@ const findPlannerTodos = (messages: AIMessage[] = []): Todo[] => {
  * 过滤掉 <agent_meta> 标签及其内容，用于流式显示时隐藏 JSON 元数据
  */
 const filterDataTag = (content: string): string => {
-  // 移除 <agent_meta>...</agent_meta> 标签及其内容（包括不完整的结束标签）
-  return content.replace(/<agent_meta>[\s\S]*?(?:<\/agent_meta>|$)/g, '').trim()
+  if (!content) return ''
+  // 移除完整的标签：<agent_meta>...</agent_meta>
+  let cleaned = content.replace(/<agent_meta>[\s\S]*?<\/agent_meta>/gi, '')
+  // 移除不完整的标签（用于流式输出）：<agent_meta>...（没有结束标签）
+  cleaned = cleaned.replace(/<agent_meta>[\s\S]*$/gi, '')
+  return cleaned.trim()
 }
 
 // 渲染消息内容
@@ -199,14 +203,15 @@ const renderMessageContent = (
     if (showCursor) {
     return null
     }
-    // 如果不在流式输出且没有有效数据，显示原始内容
+    // 如果不在流式输出且没有有效数据，显示原始内容（过滤掉 agent_meta 标签）
+    const displayContent = filterDataTag(content)
     return (
       <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={markdownComponents}
         >
-          {content}
+          {displayContent}
         </ReactMarkdown>
         {showCursor && <span className="ai-cursor" />}
       </div>
@@ -214,8 +219,8 @@ const renderMessageContent = (
   }
 
   // 如果没有 JSON 结构，使用 markdown 渲染
-  // 过滤掉 <data> 标签内容（如果有的话）
-  const displayContent = hasDataTag ? filterDataTag(content) : content
+  // 始终过滤掉 <agent_meta> 标签内容
+  const displayContent = filterDataTag(content)
   
   return (
     <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
@@ -260,16 +265,20 @@ const ComponentRendererWrapper: React.FC<{
       }
       
       if (textToShow.length > 0) {
-        return (
-          <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={markdownComponents}
-            >
-              {textToShow}
-            </ReactMarkdown>
-          </div>
-        )
+        // 确保提取的内容也过滤了 agent_meta 标签
+        const cleanedText = filterDataTag(textToShow)
+        if (cleanedText.length > 0) {
+          return (
+            <div className="text-sm prose prose-sm max-w-none text-base-content break-words">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={markdownComponents}
+              >
+                {cleanedText}
+              </ReactMarkdown>
+            </div>
+          )
+        }
       }
       // 如果没有前面的内容，返回 null（等待更多内容或组件解析）
       return null
