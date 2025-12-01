@@ -3677,11 +3677,14 @@ async fn summarize_chat_title(
     // 创建 HTTP 客户端
     let client = reqwest::Client::new();
     
-    // 发送请求
-    let response = client
+    // 构建请求，添加基本请求头
+    let request_builder = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", ai_config.api_key))
-        .header("Content-Type", "application/json")
+        .header("Content-Type", "application/json");
+    
+    // 发送请求
+    let response = request_builder
         .json(&request)
         .send()
         .await

@@ -53,12 +53,18 @@ export function useReActAgent({
 
   // 启动 ReAct Agent
   const startReActAgent = useCallback(
-    async (chatId: string) => {
+    async (chatId: string, configId?: string) => {
       setIsStreaming(true)
       setCurrentPhase('idle')
       setCurrentIteration(0)
 
       const engine = getEngine()
+
+      // 使用传入的 configId，如果没有则使用 selectedConfigId
+      const effectiveConfigId = configId || selectedConfigId
+      if (!effectiveConfigId) {
+        throw new Error('请先选择 AI 配置')
+      }
 
       // 包装 updateMessages 以同步 messagesRef
       const wrappedUpdateMessages = (
@@ -71,7 +77,7 @@ export function useReActAgent({
 
       await engine.run(
         {
-          configId: selectedConfigId,
+          configId: effectiveConfigId,
           chatId,
           initialMessages: messagesRef.current,
           currentResourceId,

@@ -200,7 +200,7 @@ const AIPanel = () => {
 
       // 启动 ReAct Agent 循环
       try {
-        await startReActAgent(chatId!)
+        await startReActAgent(chatId!, effectiveConfigId)
       } catch (err) {
         console.error('ReAct Agent 执行失败:', err)
         if (!isStoppedRef.current) {

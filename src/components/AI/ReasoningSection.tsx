@@ -1,4 +1,7 @@
 import React, { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { markdownComponents } from './MarkdownComponents'
 
 interface ReasoningSectionProps {
   reasoning: string
@@ -12,8 +15,13 @@ export const ReasoningSection: React.FC<ReasoningSectionProps> = ({ reasoning })
       <div className="text-xs font-semibold text-primary mb-2">思考过程</div>
       <div className="relative min-h-[2rem]">
         {showReasoning ? (
-          <div className="text-sm text-base-content/80 whitespace-pre-wrap break-words pb-6">
-            {reasoning}
+          <div className="text-sm text-base-content/80 prose prose-sm max-w-none break-words pb-6">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
+              {reasoning}
+            </ReactMarkdown>
           </div>
         ) : null}
         <button

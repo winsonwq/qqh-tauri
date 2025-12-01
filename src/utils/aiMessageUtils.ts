@@ -90,27 +90,63 @@ export function convertChatMessageToAIMessage(msg: ChatMessage): AIMessage {
 
 /**
  * 将 AIMessage 数组转换为 API 消息格式
+ * 会验证 tool 消息的 tool_call_id 是否在之前的 assistant 消息中有对应的 tool_calls
  */
 export function convertAIMessagesToChatMessages(messages: AIMessage[]) {
-  return messages
-    .filter((m) => {
-      // 过滤角色
-      if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'tool') {
-        return false
+  // 按顺序收集有效的 tool_call IDs（只收集在当前消息之前的）
+  const validToolCallIds = new Set<string>()
+  const result: Array<{
+    role: string
+    content: string
+    tool_calls?: ToolCall[]
+    tool_call_id?: string
+    name?: string
+  }> = []
+  
+  for (const m of messages) {
+    // 过滤角色
+    if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'tool') {
+      continue
+    }
+    
+    // 对于 assistant 消息，先收集其 tool_calls 的 ID（无论 content 是否为空）
+    if (m.role === 'assistant' && m.tool_calls) {
+      for (const toolCall of m.tool_calls) {
+        if (toolCall.id) {
+          validToolCallIds.add(toolCall.id)
+        }
       }
-      // 过滤掉 content 为空或只包含空白字符的消息
-      if (!m.content || m.content.trim().length === 0) {
-        return false
+    }
+    
+    // 对于 tool 角色的消息，验证其 tool_call_id 是否在之前的消息中有对应的 tool_calls
+    if (m.role === 'tool' && m.tool_call_id) {
+      if (!validToolCallIds.has(m.tool_call_id)) {
+        console.warn(
+          `[convertAIMessagesToChatMessages] 过滤掉无效的 tool 消息: tool_call_id=${m.tool_call_id} 在之前的消息中没有对应的 tool_calls`
+        )
+        continue
       }
-      return true
-    })
-    .map((m) => ({
+    }
+    
+    // 过滤掉 content 为空或只包含空白字符的消息
+    // 注意：assistant 消息即使 content 为空，如果有 tool_calls 也需要保留
+    const hasContent = m.content && m.content.trim().length > 0
+    const hasToolCalls = m.role === 'assistant' && m.tool_calls && m.tool_calls.length > 0
+    
+    if (!hasContent && !hasToolCalls) {
+      continue
+    }
+    
+    result.push({
       role: m.role,
-      content: m.content,
+      content: m.content || '', // 如果没有 content，使用空字符串
       tool_calls: m.tool_calls,
       tool_call_id: m.tool_call_id,
       name: m.name,
-    }))
+    })
+  }
+  
+  return result
 }
 
 /**
