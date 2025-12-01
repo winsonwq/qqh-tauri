@@ -304,7 +304,7 @@ const HomePage = () => {
           <div className="modal-box">
             <h3 className="font-bold text-lg mb-4">添加URL资源</h3>
             <p className="text-sm text-base-content/70 mb-4">
-              支持 YouTube、Bilibili 等视频平台的链接。系统将自动获取视频字幕并转换为转写结果。
+              支持 YouTube、Bilibili 等视频平台的链接。系统将自动获取视频标题和字幕并转换为转写结果。
             </p>
             <div className="form-control">
               <label className="label">
@@ -340,7 +340,7 @@ const HomePage = () => {
                 onClick={handleCreateUrlResource}
                 disabled={urlLoading || !urlInput.trim()}
               >
-                {urlLoading ? '创建中...' : '创建'}
+                {urlLoading ? '正在获取视频信息...' : '创建'}
               </button>
             </div>
           </div>

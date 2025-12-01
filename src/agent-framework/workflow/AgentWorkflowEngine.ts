@@ -644,7 +644,10 @@ export class AgentWorkflowEngine {
   }
 
   private findToolServer(toolName: string, mcpServers: any[]): any {
-      return mcpServers.find((s: any) => s.tools?.some((t: any) => t.name === toolName));
+      return mcpServers.find((s: any) => {
+        const isEnabled = s.config?.enabled ?? true
+        return isEnabled && s.status === 'connected' && s.tools?.some((t: any) => t.name === toolName)
+      })
   }
 
   /**

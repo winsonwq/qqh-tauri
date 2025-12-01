@@ -17,14 +17,17 @@ export function getAvailableTools(mcpServers: MCPServerInfo[]): MCPTool[] {
 }
 
 /**
- * 查找工具对应的服务器
+ * 查找工具对应的服务器（只返回 enabled 为 true 的服务器）
  */
 export function findToolServer(
   toolName: string,
   mcpServers: MCPServerInfo[],
 ): MCPServerInfo | null {
   return (
-    mcpServers.find((server) => server.tools?.some((tool) => tool.name === toolName)) || null
+    mcpServers.find((server) => {
+      const isEnabled = server.config?.enabled ?? true
+      return isEnabled && server.status === 'connected' && server.tools?.some((tool) => tool.name === toolName)
+    }) || null
   )
 }
 
