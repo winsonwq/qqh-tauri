@@ -1100,10 +1100,14 @@ async fn execute_transcription_task(
                         .map_err(|e| format!("数据库操作失败: {}", e))??;
                         
                         // 字幕下载完成后，自动压缩转写内容
+                        // 注意：task 和 resource 已经在上面的 await 中保存完成，这里可以安全地异步调用压缩
                         let output_file_clone = output_file.clone();
                         let task_id_clone = task_id.clone();
                         let db_path_clone = db_path.clone();
                         tokio::spawn(async move {
+                            // 添加一个小的延迟，确保数据库写入完全完成
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                            
                             if let Err(e) = compress_transcription_after_completion(
                                 output_file_clone,
                                 task_id_clone,
@@ -1459,10 +1463,14 @@ async fn execute_transcription_task(
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
     // 转写完成后，自动压缩转写内容
+    // 注意：task 和 resource 已经在上面的 await 中保存完成，这里可以安全地异步调用压缩
     let output_file_clone = output_file.clone();
     let task_id_clone = task_id.clone();
     let db_path_clone = db_path.clone();
     tokio::spawn(async move {
+        // 添加一个小的延迟，确保数据库写入完全完成
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        
         if let Err(e) = compress_transcription_after_completion(
             output_file_clone,
             task_id_clone,
@@ -1599,6 +1607,7 @@ async fn compress_transcription_after_completion(
         eprintln!("==============================");
         
         // 更新数据库
+        // 注意：这里需要确保获取到最新的 task 数据，然后只更新 compressed_content 字段
         tokio::task::spawn_blocking({
             let db_path = db_path.clone();
             let task_id = task_id.clone();
@@ -1607,13 +1616,29 @@ async fn compress_transcription_after_completion(
                 let conn = db::init_database(&db_path)
                     .map_err(|e| format!("无法初始化数据库: {}", e))?;
                 
+                // 从数据库获取最新的 task 数据，确保包含所有已保存的字段
                 let mut task = db::get_task(&conn, &task_id)
                     .map_err(|e| format!("无法获取任务: {}", e))?
                     .ok_or_else(|| "任务不存在".to_string())?;
                 
+                // 记录更新前的 task 状态，用于调试
+                eprintln!("压缩前 task 状态: status={}, result={:?}, completed_at={:?}", 
+                    task.status, 
+                    task.result.as_ref().map(|r| r.len()).unwrap_or(0),
+                    task.completed_at
+                );
+                
+                // 只更新 compressed_content 字段，保留其他所有字段
                 task.compressed_content = Some(compressed);
+                
+                // 保存更新后的 task（会保存所有字段，包括 compressed_content）
                 db::update_task(&conn, &task)
                     .map_err(|e| format!("无法更新任务: {}", e))?;
+                
+                // 记录更新后的 task 状态，用于调试
+                eprintln!("压缩后 task 已保存: compressed_content 长度={}", 
+                    task.compressed_content.as_ref().map(|c| c.len()).unwrap_or(0)
+                );
                 
                 Ok::<(), String>(())
             }
@@ -1753,6 +1778,7 @@ async fn compress_transcription_after_completion(
     eprintln!("==============================");
     
     // 更新数据库
+    // 注意：这里需要确保获取到最新的 task 数据，然后只更新 compressed_content 字段
     tokio::task::spawn_blocking({
         let db_path = db_path.clone();
         let task_id = task_id.clone();
@@ -1761,13 +1787,29 @@ async fn compress_transcription_after_completion(
             let conn = db::init_database(&db_path)
                 .map_err(|e| format!("无法初始化数据库: {}", e))?;
             
+            // 从数据库获取最新的 task 数据，确保包含所有已保存的字段
             let mut task = db::get_task(&conn, &task_id)
                 .map_err(|e| format!("无法获取任务: {}", e))?
                 .ok_or_else(|| "任务不存在".to_string())?;
             
+            // 记录更新前的 task 状态，用于调试
+            eprintln!("压缩前 task 状态: status={}, result={:?}, completed_at={:?}", 
+                task.status, 
+                task.result.as_ref().map(|r| r.len()).unwrap_or(0),
+                task.completed_at
+            );
+            
+            // 只更新 compressed_content 字段，保留其他所有字段
             task.compressed_content = Some(final_compressed_clone);
+            
+            // 保存更新后的 task（会保存所有字段，包括 compressed_content）
             db::update_task(&conn, &task)
                 .map_err(|e| format!("无法更新任务: {}", e))?;
+            
+            // 记录更新后的 task 状态，用于调试
+            eprintln!("压缩后 task 已保存: compressed_content 长度={}", 
+                task.compressed_content.as_ref().map(|c| c.len()).unwrap_or(0)
+            );
             
             Ok::<(), String>(())
         }
