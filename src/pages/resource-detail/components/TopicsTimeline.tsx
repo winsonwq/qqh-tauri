@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, useCallback } from 'react'
 import { Topic, TopicTimeRange } from '../../../models/TranscriptionResource'
 import { PlayerRef } from '../../../components/Player'
+import ScrollContainer from '../../../components/ScrollContainer'
 
 interface TopicsTimelineProps {
   topics?: Topic[]
@@ -142,7 +143,7 @@ const TopicsTimeline = memo(({
       </div>
 
       {/* Topics 列表 - 横向滚动 */}
-      <div className="overflow-x-auto pb-2">
+      <ScrollContainer direction="horizontal">
         <div className="flex gap-2 min-w-max">
           {topics.map((topic, topicIndex) => {
             const isHovered = hoveredTopicIndex === topicIndex
@@ -169,7 +170,7 @@ const TopicsTimeline = memo(({
             )
           })}
         </div>
-      </div>
+      </ScrollContainer>
     </div>
   )
 })
