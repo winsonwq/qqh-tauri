@@ -6,7 +6,7 @@ import { useAppSelector, useAppDispatch } from '../../../redux/hooks';
 import { clearLogs } from '../../../redux/slices/transcriptionLogsSlice';
 import { TranscriptionTask, TranscriptionTaskStatus } from '../../../models';
 import { TranscriptionResultJson } from '../../../models/TranscriptionResult';
-import { HiDocumentText, HiInformationCircle, HiTrash, HiStop, HiArrowDownTray, HiSparkles, HiTag } from 'react-icons/hi2';
+import { HiDocumentText, HiInformationCircle, HiTrash, HiStop, HiArrowDownTray, HiSparkles, HiTag, HiEllipsisVertical } from 'react-icons/hi2';
 import { getStatusText } from './transcriptionUtils';
 import TranscriptionJsonView from './TranscriptionJsonView';
 import TranscriptionInfoModal from './TranscriptionInfoModal';
@@ -56,8 +56,10 @@ const TranscriptionHistory = ({
   const [viewMode, setViewMode] = useState<'result' | 'log'>('result'); // 切换显示模式
   const [isCompressing, setIsCompressing] = useState(false);
   const [isExtractingTopics, setIsExtractingTopics] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const previousTaskIdRef = useRef<string | null>(null); // 跟踪上一次选中的任务 ID
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // 只选择当前任务的日志，避免其他任务的日志更新导致重新渲染
   const currentTaskLogs = useAppSelector(
@@ -119,11 +121,13 @@ const TranscriptionHistory = ({
     // 检查任务是否已完成且有压缩内容
     if (selectedTask.status !== TranscriptionTaskStatus.COMPLETED) {
       message.error('只有已完成的任务才能提取 topics');
+      setIsDropdownOpen(false);
       return;
     }
     
     if (!selectedTask.compressed_content) {
       message.error('任务尚未压缩，无法提取 topics');
+      setIsDropdownOpen(false);
       return;
     }
     
@@ -141,9 +145,13 @@ const TranscriptionHistory = ({
         });
         onTaskUpdated(selectedTaskId, updatedTask);
       }
+      
+      // 操作完成后关闭下拉菜单
+      setIsDropdownOpen(false);
     } catch (err) {
       console.error('提取 topics 失败:', err);
       message.error(err instanceof Error ? err.message : '提取 topics 失败');
+      setIsDropdownOpen(false);
     } finally {
       setIsExtractingTopics(false);
     }
@@ -156,11 +164,13 @@ const TranscriptionHistory = ({
     // 检查任务是否已完成且有结果
     if (selectedTask.status !== TranscriptionTaskStatus.COMPLETED) {
       message.error('只有已完成的任务才能压缩');
+      setIsDropdownOpen(false);
       return;
     }
     
     if (!selectedTask.result) {
       message.error('任务没有转写结果');
+      setIsDropdownOpen(false);
       return;
     }
     
@@ -179,9 +189,13 @@ const TranscriptionHistory = ({
         });
         onTaskUpdated(selectedTaskId, updatedTask);
       }
+      
+      // 操作完成后关闭下拉菜单
+      setIsDropdownOpen(false);
     } catch (err) {
       console.error('压缩失败:', err);
       message.error(err instanceof Error ? err.message : '压缩失败');
+      setIsDropdownOpen(false);
     } finally {
       setIsCompressing(false);
     }
@@ -238,6 +252,25 @@ const TranscriptionHistory = ({
     }
   };
 
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsDropdownOpen(false);
+      }
+    };
+
+    if (isDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [isDropdownOpen]);
+
   // 当日志更新时，自动滚动到底部（使用节流优化性能）
   useEffect(() => {
     if (!realtimeLog || !logEndRef.current || viewMode !== 'log') return;
@@ -251,6 +284,11 @@ const TranscriptionHistory = ({
     
     return () => clearTimeout(timeoutId);
   }, [realtimeLog, viewMode]);
+
+  // 当视图模式切换时，关闭下拉菜单
+  useEffect(() => {
+    setIsDropdownOpen(false);
+  }, [viewMode]);
 
   // 当选中任务变化时，自动设置视图模式（仅在任务切换时，不覆盖用户手动选择）
   useEffect(() => {
@@ -308,126 +346,201 @@ const TranscriptionHistory = ({
             <p>暂无转写任务</p>
             <p className="text-sm mt-2">点击上方按钮创建转写任务</p>
           </div>
-        ) : (
-          <Select
-            value={selectedTaskId || ''}
-            options={[
-              { value: '', label: '请选择...', disabled: true },
-              ...sortedTasks.map((task) => ({
-                value: task.id,
-                label: `${new Date(task.created_at).toLocaleString('zh-CN')} - ${getStatusText(task.status)}${
-                  task.status === TranscriptionTaskStatus.COMPLETED ? ' ✓' : ''
-                }`,
-              })),
-            ]}
-            onChange={(value) => onSelectTask(value || null)}
-            size="sm"
-            placeholder="请选择..."
-            aria-label="选择转写任务"
-          />
-        )}
+        ) : null}
+      </div>
+
+      {/* 控制栏：Select + 【结果｜日志】切换 + 三个点的按钮 */}
+      <div className="flex-shrink-0 mb-3">
+        <div className="flex items-center gap-2">
+          {/* Select 切换 */}
+          {tasks.length > 0 && (
+            <div className="flex-1">
+              <Select
+                value={selectedTaskId || ''}
+                options={[
+                  { value: '', label: '请选择...', disabled: true },
+                  ...sortedTasks.map((task) => ({
+                    value: task.id,
+                    label: `${new Date(task.created_at).toLocaleString('zh-CN')} - ${getStatusText(task.status)}${
+                      task.status === TranscriptionTaskStatus.COMPLETED ? ' ✓' : ''
+                    }`,
+                  })),
+                ]}
+                onChange={(value) => onSelectTask(value || null)}
+                size="sm"
+                placeholder="请选择..."
+                aria-label="选择转写任务"
+              />
+            </div>
+          )}
+          {/* 【结果｜日志】切换按钮组 */}
+          {selectedTask && 
+           (selectedTask.status === TranscriptionTaskStatus.COMPLETED || 
+            selectedTask.status === TranscriptionTaskStatus.RUNNING ||
+            selectedTask.status === TranscriptionTaskStatus.PENDING ||
+            selectedTask.status === TranscriptionTaskStatus.FAILED) && (
+            <div className="join">
+              {selectedTask.status === TranscriptionTaskStatus.COMPLETED && (
+                <button
+                  className={`join-item btn btn-sm ${viewMode === 'result' ? 'btn-active' : ''}`}
+                  onClick={() => setViewMode('result')}
+                >
+                  结果
+                </button>
+              )}
+              <button
+                className={`join-item btn btn-sm ${viewMode === 'log' ? 'btn-active' : ''}`}
+                onClick={() => setViewMode('log')}
+              >
+                日志
+              </button>
+            </div>
+          )}
+          {/* 三个点的下拉菜单：只在结果视图时显示 */}
+          {selectedTask && viewMode === 'result' && (
+            <div
+              ref={dropdownRef}
+              className={`dropdown dropdown-end ${isDropdownOpen ? 'dropdown-open' : ''}`}
+            >
+              <div
+                tabIndex={0}
+                role="button"
+                className="btn btn-sm btn-ghost"
+                title="更多操作"
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              >
+                <HiEllipsisVertical className="w-5 h-5" />
+              </div>
+              <ul
+                tabIndex={0}
+                className="dropdown-content menu bg-base-100 rounded-box z-[1] w-52 p-2 shadow-lg border border-base-300"
+              >
+                {/* 查看转写信息 */}
+                {jsonData && (
+                  <li>
+                    <a
+                      onClick={(e) => {
+                        setShowInfoModal(true);
+                        setIsDropdownOpen(false);
+                        e.preventDefault();
+                      }}
+                    >
+                      <HiInformationCircle className="w-4 h-4" />
+                      查看转写信息
+                    </a>
+                  </li>
+                )}
+                {/* 提取 topics：只在任务已完成且有压缩内容时显示 */}
+                {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
+                 selectedTask.compressed_content && (
+                  <li>
+                    <a
+                      onClick={(e) => {
+                        if (!isExtractingTopics) {
+                          handleExtractTopics();
+                          // 不立即关闭下拉菜单，让用户看到 loading 状态
+                        }
+                        e.preventDefault();
+                      }}
+                      className={isExtractingTopics ? 'opacity-60 cursor-wait' : ''}
+                    >
+                      {isExtractingTopics ? (
+                        <>
+                          <span className="loading loading-spinner loading-xs"></span>
+                          提取 topics 中...
+                        </>
+                      ) : (
+                        <>
+                          <HiTag className="w-4 h-4" />
+                          提取 topics
+                        </>
+                      )}
+                    </a>
+                  </li>
+                )}
+                {/* 压缩：只在任务已完成且有结果时显示 */}
+                {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
+                 selectedTask.result && (
+                  <li>
+                    <a
+                      onClick={(e) => {
+                        if (!isCompressing) {
+                          handleCompress();
+                          // 不立即关闭下拉菜单，让用户看到 loading 状态
+                        }
+                        e.preventDefault();
+                      }}
+                      className={isCompressing ? 'opacity-60 cursor-wait' : ''}
+                    >
+                      {isCompressing ? (
+                        <>
+                          <span className="loading loading-spinner loading-xs"></span>
+                          压缩中...
+                        </>
+                      ) : (
+                        <>
+                          <HiSparkles className="w-4 h-4" />
+                          压缩
+                        </>
+                      )}
+                    </a>
+                  </li>
+                )}
+                {/* 下载：只在任务已完成且有结果时显示 */}
+                {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
+                 (jsonData?.transcription?.length ?? 0) > 0 && (
+                  <li>
+                    <a
+                      onClick={(e) => {
+                        handleExportSRT();
+                        setIsDropdownOpen(false);
+                        e.preventDefault();
+                      }}
+                    >
+                      <HiArrowDownTray className="w-4 h-4" />
+                      下载
+                    </a>
+                  </li>
+                )}
+                {/* 删除：只在任务不是运行中或待处理时显示 */}
+                {selectedTask.status !== TranscriptionTaskStatus.RUNNING && 
+                 selectedTask.status !== TranscriptionTaskStatus.PENDING && (
+                  <li>
+                    <a
+                      onClick={(e) => {
+                        setShowDeleteModal(true);
+                        setIsDropdownOpen(false);
+                        e.preventDefault();
+                      }}
+                      className="text-error"
+                    >
+                      <HiTrash className="w-4 h-4" />
+                      删除
+                    </a>
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 下部分：转写结果/日志展示 */}
       {selectedTask && (
-        <div className="flex-1 flex flex-col min-h-0 mt-4 border-base-300">
-          {/* 切换按钮 */}
-          <div className="flex items-center justify-between mb-3 flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <h3 className="text-lg font-semibold">
-                {viewMode === 'result' ? '结果' : '日志'}
-              </h3>
-              {/* 如果任务正在运行，在标题旁边显示停止按钮 */}
-              {selectedTask && selectedTask.status === TranscriptionTaskStatus.RUNNING && (
-                <button
-                  className="btn btn-warning btn-sm"
-                  onClick={handleStopTask}
-                  title="停止任务"
-                >
-                  <HiStop className="w-4 h-4 mr-1" />
-                  停止
-                </button>
-              )}
-              {viewMode === 'result' && jsonData && (
-                <button
-                  className="btn btn-sm btn-ghost btn-circle"
-                  onClick={() => setShowInfoModal(true)}
-                  title="查看转写信息"
-                >
-                  <HiInformationCircle className="w-5 h-5" />
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {/* 提取 topics 按钮：只在任务已完成且有压缩内容时显示 */}
-              {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
-               selectedTask.compressed_content && (
-                <button
-                  className={`btn btn-sm btn-primary btn-ghost ${isExtractingTopics ? 'loading' : ''}`}
-                  onClick={handleExtractTopics}
-                  disabled={isExtractingTopics}
-                  title="手动触发提取 topics"
-                >
-                  {!isExtractingTopics && <HiTag className="w-4 h-4" />}
-                </button>
-              )}
-              {/* 压缩按钮：只在任务已完成且有结果时显示 */}
-              {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
-               selectedTask.result && (
-                <button
-                  className={`btn btn-sm btn-primary btn-ghost ${isCompressing ? 'loading' : ''}`}
-                  onClick={handleCompress}
-                  disabled={isCompressing}
-                  title="手动触发压缩转写内容"
-                >
-                  {!isCompressing && <HiSparkles className="w-4 h-4" />}
-                </button>
-              )}
-              {/* 导出按钮 */}
-              {selectedTask.status === TranscriptionTaskStatus.COMPLETED && 
-               (jsonData?.transcription?.length ?? 0) > 0 && (
-                <button
-                  className="btn btn-sm btn-primary btn-ghost"
-                  onClick={handleExportSRT}
-                  title="导出为SRT格式"
-                >
-                  <HiArrowDownTray className="w-4 h-4" />
-                </button>
-              )}
-              {/* 删除按钮 */}
-              {selectedTask.status !== TranscriptionTaskStatus.RUNNING && 
-               selectedTask.status !== TranscriptionTaskStatus.PENDING && (
-                <button
-                  className="btn btn-sm btn-error btn-ghost"
-                  onClick={() => setShowDeleteModal(true)}
-                  title="删除任务"
-                >
-                  <HiTrash className="w-4 h-4" />
-                </button>
-              )}
-              {/* 切换按钮组 */}
-              {(selectedTask.status === TranscriptionTaskStatus.COMPLETED || 
-                selectedTask.status === TranscriptionTaskStatus.RUNNING ||
-                selectedTask.status === TranscriptionTaskStatus.PENDING ||
-                selectedTask.status === TranscriptionTaskStatus.FAILED) && (
-                <div className="join">
-                  {selectedTask.status === TranscriptionTaskStatus.COMPLETED && (
-                    <button
-                      className={`join-item btn btn-sm ${viewMode === 'result' ? 'btn-active' : ''}`}
-                      onClick={() => setViewMode('result')}
-                    >
-                      结果
-                    </button>
-                  )}
-                  <button
-                    className={`join-item btn btn-sm ${viewMode === 'log' ? 'btn-active' : ''}`}
-                    onClick={() => setViewMode('log')}
-                  >
-                    日志
-                  </button>
-                </div>
-              )}
-            </div>
+        <div className="flex-1 flex flex-col min-h-0 border-base-300">
+          {/* 标题和停止按钮 */}
+          <div className="flex items-center gap-2 mb-3 flex-shrink-0">
+            {/* 如果任务正在运行，在标题旁边显示停止按钮 */}
+            {selectedTask.status === TranscriptionTaskStatus.RUNNING && (
+              <button
+                className="btn btn-warning btn-sm"
+                onClick={handleStopTask}
+                title="停止任务"
+              >
+                <HiStop className="w-4 h-4 mr-1" />
+                停止
+              </button>
+            )}
           </div>
 
           {/* 内容区域 */}
