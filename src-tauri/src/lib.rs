@@ -1170,7 +1170,7 @@ async fn execute_transcription_task(
                         .await
                         .map_err(|e| format!("数据库操作失败: {}", e))??;
                         
-                        // 字幕下载完成后，自动压缩转写内容
+                        // 字幕下载完成后，自动压缩转写内容，然后提取 topics
                         // 注意：task 和 resource 已经在上面的 await 中保存完成，这里可以安全地异步调用压缩
                         let output_file_clone = output_file.clone();
                         let task_id_clone = task_id.clone();
@@ -1179,12 +1179,23 @@ async fn execute_transcription_task(
                             // 添加一个小的延迟，确保数据库写入完全完成
                             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                             
+                            // 先压缩
                             if let Err(e) = compress_transcription_after_completion(
                                 output_file_clone,
+                                task_id_clone.clone(),
+                                db_path_clone.clone(),
+                            ).await {
+                                eprintln!("压缩转写内容失败: {}", e);
+                                return;
+                            }
+                            
+                            // 压缩完成后，提取 topics
+                            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                            if let Err(e) = extract_topics_after_compression(
                                 task_id_clone,
                                 db_path_clone,
                             ).await {
-                                eprintln!("压缩转写内容失败: {}", e);
+                                eprintln!("提取 topics 失败: {}", e);
                             }
                         });
                         
@@ -1533,7 +1544,7 @@ async fn execute_transcription_task(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 转写完成后，自动压缩转写内容
+    // 转写完成后，自动压缩转写内容，然后提取 topics
     // 注意：task 和 resource 已经在上面的 await 中保存完成，这里可以安全地异步调用压缩
     let output_file_clone = output_file.clone();
     let task_id_clone = task_id.clone();
@@ -1542,12 +1553,23 @@ async fn execute_transcription_task(
         // 添加一个小的延迟，确保数据库写入完全完成
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         
+        // 先压缩
         if let Err(e) = compress_transcription_after_completion(
             output_file_clone,
+            task_id_clone.clone(),
+            db_path_clone.clone(),
+        ).await {
+            eprintln!("压缩转写内容失败: {}", e);
+            return;
+        }
+        
+        // 压缩完成后，提取 topics
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        if let Err(e) = extract_topics_after_compression(
             task_id_clone,
             db_path_clone,
         ).await {
-            eprintln!("压缩转写内容失败: {}", e);
+            eprintln!("提取 topics 失败: {}", e);
         }
     });
     
@@ -1908,21 +1930,6 @@ async fn compress_transcription_after_completion(
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
-    // 压缩完成后，自动提取 topics
-    let task_id_clone = task_id.clone();
-    let db_path_clone = db_path.clone();
-    tokio::spawn(async move {
-        // 添加一个小的延迟，确保数据库写入完全完成
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-        
-        if let Err(e) = extract_topics_after_compression(
-            task_id_clone,
-            db_path_clone,
-        ).await {
-            eprintln!("提取 topics 失败: {}", e);
-        }
-    });
-    
     Ok(())
 }
 
@@ -1935,11 +1942,11 @@ async fn extract_topics_manual(
     let app_data_dir = get_app_data_dir(&app)?;
     let db_path = db::get_db_path(&app_data_dir);
     
-    // 获取任务信息并调用提取函数
-    let compressed_content = tokio::task::spawn_blocking({
+    // 获取任务信息和内容（优先使用压缩内容，如果没有则从原始结果读取）
+    let content_for_extraction = tokio::task::spawn_blocking({
         let db_path = db_path.clone();
         let task_id = task_id.clone();
-        move || -> Result<String, String> {
+        move || -> Result<(String, Option<PathBuf>), String> {
             let conn = db::init_database(&db_path)
                 .map_err(|e| format!("无法初始化数据库: {}", e))?;
             
@@ -1947,22 +1954,74 @@ async fn extract_topics_manual(
                 .map_err(|e| format!("无法获取任务: {}", e))?
                 .ok_or_else(|| "任务不存在".to_string())?;
             
-            // 检查任务是否已完成且有压缩内容
+            // 检查任务是否已完成
             if task.status != "completed" {
                 return Err("任务尚未完成，无法提取 topics".to_string());
             }
             
-            let compressed = task.compressed_content
-                .ok_or_else(|| "任务尚未压缩，无法提取 topics".to_string())?;
+            // 优先使用压缩内容
+            if let Some(compressed) = task.compressed_content {
+                return Ok((compressed, None));
+            }
             
-            Ok(compressed)
+            // 如果没有压缩内容，从原始结果文件读取
+            let result_file = task.result.as_ref()
+                .map(|r| PathBuf::from(r))
+                .filter(|p| p.exists())
+                .ok_or_else(|| "转写结果文件不存在，且任务尚未压缩".to_string())?;
+            
+            Ok((String::new(), Some(result_file)))
         }
     })
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
     
+    let (content, result_file) = content_for_extraction;
+    
+    // 如果有压缩内容，直接使用；否则从原始结果文件读取并格式化
+    let content_to_extract = if !content.is_empty() {
+        content
+    } else {
+        // 从原始结果文件读取并格式化（类似压缩函数的逻辑）
+        let result_file = result_file.unwrap();
+        let file_content = tokio::fs::read_to_string(&result_file)
+            .await
+            .map_err(|e| format!("无法读取转写结果文件: {}", e))?;
+        
+        let json_value: serde_json::Value = serde_json::from_str(&file_content)
+            .map_err(|e| format!("无法解析转写结果 JSON: {}", e))?;
+        
+        let segments = json_value
+            .get("transcription")
+            .and_then(|t| t.as_array())
+            .ok_or_else(|| "无法找到 transcription 数组".to_string())?;
+        
+        if segments.is_empty() {
+            return Err("转写内容为空，无法提取 topics".to_string());
+        }
+        
+        // 格式化转写内容（类似压缩函数的格式化逻辑）
+        let mut input_segments = Vec::new();
+        for seg in segments {
+            let time_from = seg
+                .get("timestamps")
+                .and_then(|t| t.get("from"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+            let text = seg
+                .get("text")
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
+            if !text.is_empty() {
+                input_segments.push(format!("[{}] {}", time_from, text));
+            }
+        }
+        
+        input_segments.join("\n")
+    };
+    
     // 调用提取函数并等待完成
-    extract_topics_internal(task_id, compressed_content, db_path).await?;
+    extract_topics_internal(task_id, content_to_extract, db_path).await?;
     
     Ok("Topics 提取完成".to_string())
 }
@@ -2034,7 +2093,7 @@ async fn extract_topics_internal(
     let system_message = ai::ChatMessage {
         role: "system".to_string(),
         content: Some(
-            "你是一个专业的视频内容分析助手。你的任务是从视频转写内容中提取相关的 topics（主题），并为每个 topic 标注时间范围。\n\n要求：\n1. 分析转写内容，识别出几个主要的 topics（主题）\n2. 为每个 topic 分配一个唯一的颜色（hex 格式，如 #FF5733），颜色应该符合 daisyui 的配色方案，在 light 和 dark 模式下都能良好显示\n3. 每个 topic 的透明度设置为 0.6（用于叠加显示）\n4. 为每个 topic 提取对应的时间范围（可能有多个时间范围）\n5. 时间范围使用秒数（浮点数），与转写结果中的 offsets 字段格式一致\n6. 输出格式必须是有效的 JSON，格式如下：\n{\n  \"topics\": [\n    {\n      \"name\": \"topic 名称\",\n      \"color\": \"#FF5733\",\n      \"opacity\": 0.6,\n      \"time_ranges\": [\n        {\"start\": 10.5, \"end\": 45.2},\n        {\"start\": 120.3, \"end\": 180.7}\n      ]\n    }\n  ]\n}\n7. 确保颜色机制在响应中保留，每个 topic 都有唯一的颜色".to_string(),
+            "你是一个专业的视频内容分析助手。你的任务是从视频转写内容中提取相关的 topics（主题），并为每个 topic 标注时间范围。\n\n要求：\n1. 分析转写内容，识别出几个主要的 topics（主题）\n2. 为每个 topic 从以下10种预定义颜色中选择一个唯一的颜色（按顺序分配，第一个 topic 用第一种颜色，第二个 topic 用第二种颜色，以此类推）：\n   - #3B82F6 (蓝色)\n   - #10B981 (绿色)\n   - #F59E0B (橙色)\n   - #EF4444 (红色)\n   - #8B5CF6 (紫色)\n   - #EC4899 (粉色)\n   - #06B6D4 (青色)\n   - #84CC16 (黄绿色)\n   - #F97316 (橙红色)\n   - #6366F1 (靛蓝色)\n3. 每个 topic 的透明度设置为 0.6（用于叠加显示）\n4. 为每个 topic 提取对应的时间范围（可能有多个时间范围）\n5. 时间范围使用秒数（浮点数），与转写结果中的 offsets 字段格式一致\n6. 如果同一个 topic 的多个时间范围是连续的或接近的（间隔小于 5 秒），应该将这些时间范围合并为一个连续的时间范围\n7. 输出格式必须是有效的 JSON，格式如下：\n{\n  \"topics\": [\n    {\n      \"name\": \"topic 名称\",\n      \"color\": \"#3B82F6\",\n      \"opacity\": 0.6,\n      \"time_ranges\": [\n        {\"start\": 10.5, \"end\": 45.2},\n        {\"start\": 120.3, \"end\": 180.7}\n      ]\n    }\n  ]\n}\n8. 确保严格按照颜色列表的顺序为 topics 分配颜色，每个 topic 都有唯一的颜色".to_string(),
         ),
         tool_calls: None,
         tool_call_id: None,

@@ -87,6 +87,21 @@ const TopicsTimeline = memo(({
     return null
   }
 
+  // 计算所有色块的总数，用于 z-index 计算
+  const totalRanges = useMemo(() => {
+    return topics.reduce((sum, topic) => sum + topic.time_ranges.length, 0)
+  }, [topics])
+
+  // 计算每个色块在所有色块中的位置（按 topicIndex 和 rangeIndex 顺序）
+  const getRangePosition = useCallback((topicIndex: number, rangeIndex: number) => {
+    let position = 0
+    for (let i = 0; i < topicIndex; i++) {
+      position += topics[i].time_ranges.length
+    }
+    position += rangeIndex
+    return position
+  }, [topics])
+
   return (
     <div className="w-full">
       {/* 时间轴 */}
@@ -103,12 +118,19 @@ const TopicsTimeline = memo(({
               const style = calculateRangeStyle(timeRange)
               const isHovered = hoveredTimeRange?.topicIndex === topicIndex && 
                                 hoveredTimeRange?.rangeIndex === rangeIndex
-              
-              // 计算色块宽度百分比，用于判断是否显示文字
-              const widthPercent = parseFloat(style.width.replace('%', ''))
-              const shouldShowText = widthPercent > 5 // 宽度大于5%才显示文字
-              
               const isTopicHovered = hoveredTopicIndex === topicIndex
+              
+              // 默认情况下：相同颜色的色块仅第一块显示时间
+              // 悬停色块时：显示时间
+              // hover topic 时：只高亮，不显示时间
+              const isFirstRange = rangeIndex === 0
+              const shouldShowText = isFirstRange || isHovered
+              
+              // 计算 z-index：
+              // 1. hover 时最大（1000）
+              // 2. 默认情况下，前面的色块 z-index 大于后续的色块（前面的位置值更小，所以 z-index 更大）
+              const position = getRangePosition(topicIndex, rangeIndex)
+              const zIndex = isHovered ? 1000 : (totalRanges - position)
               
               return (
                 <div
@@ -121,7 +143,7 @@ const TopicsTimeline = memo(({
                     height: '28px',
                     backgroundColor: topic.color,
                     opacity: isHovered || isTopicHovered ? Math.min(topic.opacity + 0.2, 1.0) : topic.opacity,
-                    zIndex: isHovered ? 10 : topicIndex + 1,
+                    zIndex,
                   }}
                   onClick={() => handleTimeRangeClick(topic, timeRange)}
                   onMouseEnter={() => setHoveredTimeRange({ topicIndex, rangeIndex })}
