@@ -37,18 +37,18 @@ export function useReActAgent({
   const engineRef = useRef<ReActWorkflowEngine | null>(null)
 
   // 创建或获取工作流引擎
+  // 每次调用时都重新创建引擎，确保工具列表始终是最新的
   const getEngine = useCallback(() => {
-    if (!engineRef.current) {
-      const backend = new TauriReActBackend()
-      const toolProvider = new TauriToolInfoProvider(mcpServers)
-      const promptManager = new ReActPromptManager()
-      engineRef.current = new ReActWorkflowEngine(
-        backend,
-        toolProvider,
-        promptManager,
-      )
-    }
-    return engineRef.current
+    const backend = new TauriReActBackend()
+    const toolProvider = new TauriToolInfoProvider(mcpServers)
+    const promptManager = new ReActPromptManager()
+    const engine = new ReActWorkflowEngine(
+      backend,
+      toolProvider,
+      promptManager,
+    )
+    engineRef.current = engine
+    return engine
   }, [mcpServers])
 
   // 启动 ReAct Agent

@@ -6,6 +6,7 @@ import { componentRegistry, ComponentProps } from './ComponentRegistry'
 import ResourceInfo from './tool-components/ResourceInfo'
 import TaskInfo from './tool-components/TaskInfo'
 import ResourceList from './tool-components/ResourceList'
+import TaskContentByTimeRange from './tool-components/TaskContentByTimeRange'
 import { 
   PlannerResponseDisplay, 
   VerifierResponseDisplay, 
@@ -49,6 +50,9 @@ export function initComponents() {
   
   // 注册资源列表组件
   componentRegistry.register('resource-list', ResourceList)
+  
+  // 注册任务时间范围内容组件
+  componentRegistry.register('task-content-by-time-range', TaskContentByTimeRange)
   
   // 注册 Agent 响应组件
   componentRegistry.register('planner-response', PlannerResponseAdapter)

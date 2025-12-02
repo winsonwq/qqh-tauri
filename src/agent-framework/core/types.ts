@@ -15,6 +15,8 @@ export type AgentAction =
   | 'exploring'      // 探索中
   | 'verifying'      // 验证中
   | 'summarizing'    // 总结中
+  | 'acting'         // 行动中（ReAct action 阶段，无工具调用时）
+  | 'observing'      // 观察中（ReAct observation 阶段）
 
 /**
  * 行为显示文本映射（进行时/过去时）
@@ -26,6 +28,8 @@ export const actionDisplayMap: Record<AgentAction, { present: string; past: stri
   exploring: { present: '探索中', past: '已探索' },
   verifying: { present: '验证中', past: '已验证' },
   summarizing: { present: '总结中', past: '已总结' },
+  acting: { present: '行动中', past: '已行动' },
+  observing: { present: '观察中', past: '已观察' },
 }
 
 export interface AgentPrompt {

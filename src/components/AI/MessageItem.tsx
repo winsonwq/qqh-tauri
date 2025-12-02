@@ -58,8 +58,13 @@ const inferMessageAction = (message: AIMessage): AgentAction | undefined => {
     return undefined
   }
 
-  // 优先级：pendingToolCalls > reasoning > agentType > tool_calls
+  // 优先级：pendingToolCalls > tool_calls > reasoning > agentType
   if (message.pendingToolCalls && message.pendingToolCalls.length > 0) {
+    return 'calling_tool'
+  }
+
+  // 如果有工具调用，返回 calling_tool
+  if (message.tool_calls && message.tool_calls.length > 0) {
     return 'calling_tool'
   }
 

@@ -3,6 +3,12 @@ mod mcp;
 mod ai;
 mod default_mcp;
 
+// 压缩优化相关常量
+const COMPRESSION_SHORT_CONTENT_THRESHOLD: usize = 10000; // 短内容阈值（小于此值不压缩）
+const COMPRESSION_LONG_CONTENT_THRESHOLD: usize = 150000; // 超长内容阈值（超过此值需要截断）
+const COMPRESSION_TRUNCATE_HEAD_LENGTH: usize = 50000; // 超长内容截断时前部分长度
+const COMPRESSION_TRUNCATE_TAIL_LENGTH: usize = 50000; // 超长内容截断时后部分长度
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -1590,7 +1596,7 @@ async fn compress_transcription_after_completion(
     let full_text = input_segments.join("\n");
     
     // 如果内容不太长，直接存储原始文本（不需要压缩）
-    if full_text.len() < 5000 {
+    if full_text.len() < COMPRESSION_SHORT_CONTENT_THRESHOLD {
         let compressed = format!(
             "转写内容（总时长: {:.1} 秒，共 {} 个片段）：\n\n{}",
             duration,
@@ -1601,9 +1607,10 @@ async fn compress_transcription_after_completion(
         // 打印压缩结果到控制台
         eprintln!("========== 压缩结果（短内容，未压缩）==========");
         eprintln!("任务ID: {}", task_id);
+        eprintln!("内容类型: 短内容（< {} 字符）", COMPRESSION_SHORT_CONTENT_THRESHOLD);
         eprintln!("原始片段数: {}", segments.len());
         eprintln!("原始时长: {:.1} 秒", duration);
-        eprintln!("内容长度: {} 字符（小于5000，未压缩）", full_text.len());
+        eprintln!("内容长度: {} 字符（小于{}，未压缩）", full_text.len(), COMPRESSION_SHORT_CONTENT_THRESHOLD);
         eprintln!("==============================");
         
         // 更新数据库
@@ -1682,11 +1689,21 @@ async fn compress_transcription_after_completion(
         cache_control: None,
     };
     
+    // 保存原始内容长度（在移动 full_text 之前）
+    let full_text_len = full_text.len();
+    
+    // 判断内容长度类型
+    let content_type = if full_text_len > COMPRESSION_LONG_CONTENT_THRESHOLD {
+        format!("超长内容（> {} 字符）", COMPRESSION_LONG_CONTENT_THRESHOLD)
+    } else {
+        format!("中等内容（{}-{} 字符）", COMPRESSION_SHORT_CONTENT_THRESHOLD, COMPRESSION_LONG_CONTENT_THRESHOLD)
+    };
+    
     // 如果内容太长，只取前一部分和后一部分
-    let input_text = if full_text.len() > 50000 {
-        let head = full_text.chars().take(25000).collect::<String>();
-        let tail_start = full_text.len().saturating_sub(25000);
-        let tail: String = full_text.chars().skip(tail_start).take(25000).collect();
+    let input_text = if full_text_len > COMPRESSION_LONG_CONTENT_THRESHOLD {
+        let head = full_text.chars().take(COMPRESSION_TRUNCATE_HEAD_LENGTH).collect::<String>();
+        let tail_start = full_text_len.saturating_sub(COMPRESSION_TRUNCATE_TAIL_LENGTH);
+        let tail: String = full_text.chars().skip(tail_start).take(COMPRESSION_TRUNCATE_TAIL_LENGTH).collect();
         format!("{}\n\n...（中间省略）...\n\n{}", head, tail)
     } else {
         full_text
@@ -1765,8 +1782,17 @@ async fn compress_transcription_after_completion(
     // 打印压缩结果到控制台
     eprintln!("========== 压缩结果 ==========");
     eprintln!("任务ID: {}", task_id);
+    eprintln!("内容类型: {}", content_type);
     eprintln!("原始片段数: {}", segments.len());
     eprintln!("原始时长: {:.1} 秒", duration);
+    eprintln!("原始内容长度: {} 字符", full_text_len);
+    if full_text_len > COMPRESSION_LONG_CONTENT_THRESHOLD {
+        eprintln!("发送给AI的内容长度: {} 字符（已截断：前{} + 后{}）", 
+            input_text.len(), 
+            COMPRESSION_TRUNCATE_HEAD_LENGTH, 
+            COMPRESSION_TRUNCATE_TAIL_LENGTH
+        );
+    }
     eprintln!("压缩后内容长度: {} 字符", final_compressed.len());
     eprintln!("压缩结果预览（前500字符）:");
     let preview = if final_compressed.len() > 500 {

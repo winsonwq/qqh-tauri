@@ -144,6 +144,7 @@ export class ReActWorkflowEngine {
     assistantMessageId: string,
     updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
     shouldCompress: boolean = false, // 是否压缩大消息
+    action?: string, // ReAct 阶段对应的 action
   ): Promise<AICallResult> {
     return new Promise(async (resolve, reject) => {
       let finalContent = ''
@@ -166,6 +167,7 @@ export class ReActWorkflowEngine {
               role: 'assistant' as const,
               content: '',
               timestamp: new Date(),
+              ...(action && { action }),
             },
           ]
         })
@@ -186,7 +188,7 @@ export class ReActWorkflowEngine {
             updateMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMessageId
-                  ? { ...msg, tool_calls: toolCalls }
+                  ? { ...msg, tool_calls: toolCalls, action: toolCalls.length > 0 ? 'calling_tool' : action }
                   : msg,
               ),
             )
@@ -204,6 +206,8 @@ export class ReActWorkflowEngine {
           onDone: () => {
             const hasValidReasoning = finalReasoning.trim().length > 0
             if (finalContent || finalToolCalls || hasValidReasoning) {
+              // 确定最终的 action：如果有工具调用，使用 calling_tool，否则使用传入的 action
+              const finalAction = finalToolCalls && finalToolCalls.length > 0 ? 'calling_tool' : action
               const msgToSave: AIMessage = {
                 id: assistantMessageId,
                 role: 'assistant',
@@ -211,6 +215,7 @@ export class ReActWorkflowEngine {
                 timestamp: new Date(),
                 tool_calls: finalToolCalls,
                 reasoning: hasValidReasoning ? finalReasoning : undefined,
+                ...(finalAction && { action: finalAction }),
               }
               this.backend
                 .saveMessage(msgToSave, chatId)
@@ -323,6 +328,7 @@ export class ReActWorkflowEngine {
       assistantMessageId,
       updateMessages,
       true, // 压缩大消息
+      'thinking', // thought 阶段对应 thinking action
     )
 
     const meta = parseAgentMeta(result.content)
@@ -421,6 +427,7 @@ export class ReActWorkflowEngine {
 
     // 总是传入工具列表，让 AI 自己判断是否需要调用工具
     // Action 阶段保留完整消息（不压缩）
+    // 注意：如果后续有工具调用，action 会被更新为 'calling_tool'
     const result = await this.executeAICall(
       configId,
       chatId,
@@ -431,6 +438,7 @@ export class ReActWorkflowEngine {
       assistantMessageId,
       updateMessages,
       false, // Action 阶段不压缩，保留完整信息
+      'acting', // action 阶段对应 acting action（如果有工具调用会更新为 calling_tool）
     )
 
     console.log(
@@ -471,6 +479,7 @@ export class ReActWorkflowEngine {
       assistantMessageId,
       updateMessages,
       true, // 压缩大消息
+      'observing', // observation 阶段对应 observing action
     )
 
     return result.content

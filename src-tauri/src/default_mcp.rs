@@ -85,6 +85,28 @@ pub fn get_default_tools() -> Vec<MCPTool> {
                 "required": []
             }),
         },
+        MCPTool {
+            name: "get_task_content_by_time_range".to_string(),
+            description: Some("通过时间范围获取转写任务的详细原文内容。此工具用于在获取压缩摘要后，需要查看特定时间段的完整原文时使用。建议工作流程：1) 先获取压缩摘要，找到感兴趣的时间点；2) 再使用此工具获取该时间段的详细原文。如果不提供 task_id，将使用当前上下文中的任务ID。时间格式：使用秒数（浮点数），与转写结果中的 offsets 字段格式一致".to_string()),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "任务ID（可选，如果不提供则使用当前上下文）"
+                    },
+                    "start_time": {
+                        "type": "number",
+                        "description": "开始时间（秒数，浮点数）。格式与转写结果中的 offsets.from 字段一致，例如：120.5 表示 120.5 秒"
+                    },
+                    "end_time": {
+                        "type": "number",
+                        "description": "结束时间（秒数，浮点数）。格式与转写结果中的 offsets.to 字段一致。如果不提供，将返回从 start_time 到视频结束的所有内容"
+                    }
+                },
+                "required": ["start_time"]
+            }),
+        },
     ]
 }
 
@@ -105,7 +127,7 @@ pub fn get_default_server_info() -> MCPServerInfo {
 // 此函数可用于验证工具名是否为默认工具，目前未使用但保留以备将来扩展
 #[allow(dead_code)]
 pub fn is_default_tool(tool_name: &str) -> bool {
-    matches!(tool_name, "get_system_info" | "get_resource_info" | "get_task_info" | "search_resources")
+    matches!(tool_name, "get_system_info" | "get_resource_info" | "get_task_info" | "search_resources" | "get_task_content_by_time_range")
 }
 
 // 获取应用数据目录（辅助函数）
@@ -244,6 +266,9 @@ pub async fn call_default_tool(
         }
         "search_resources" => {
             handle_search_resources(arguments, app).await
+        }
+        "get_task_content_by_time_range" => {
+            handle_get_task_content_by_time_range(arguments, app, current_task_id).await
         }
         _ => Err(format!("默认工具 {} 不存在", tool_name)),
     }
@@ -535,6 +560,186 @@ async fn handle_get_task_info(
                 "type": "component",
                 "component": "task-info",
                 "props": task_info
+            }
+        ]
+    }))
+}
+
+// 工具 Handler: 通过时间范围获取转写内容
+async fn handle_get_task_content_by_time_range(
+    arguments: Value,
+    app: AppHandle,
+    current_task_id: Option<String>,
+) -> Result<Value, String> {
+    // 解析参数：获取 task_id，如果没有提供则使用上下文中的值
+    let task_id = arguments
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or(current_task_id);
+    
+    let task_id = task_id.ok_or_else(|| {
+        "未提供 task_id 参数，且当前上下文中也没有任务ID".to_string()
+    })?;
+    
+    // 解析参数：获取时间范围
+    let start_time = arguments
+        .get("start_time")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| "必须提供 start_time 参数（秒数）".to_string())?;
+    
+    let end_time = arguments
+        .get("end_time")
+        .and_then(|v| v.as_f64());
+    
+    // 获取数据库路径
+    let app_data_dir = get_app_data_dir(&app)?;
+    let db_path = db::get_db_path(&app_data_dir);
+    
+    // 在阻塞任务中查询数据库
+    let task = tokio::task::spawn_blocking({
+        let db_path = db_path.clone();
+        let task_id = task_id.clone();
+        move || {
+            let conn = db::init_database(&db_path)
+                .map_err(|e| format!("无法初始化数据库: {}", e))?;
+            db::get_task(&conn, &task_id)
+                .map_err(|e| format!("无法从数据库读取任务: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    let task = task.ok_or_else(|| {
+        format!("任务 {} 不存在", task_id)
+    })?;
+    
+    // 检查任务是否已完成
+    if task.status != "completed" {
+        return Err(format!("任务 {} 尚未完成，无法获取转写内容", task_id));
+    }
+    
+    // 检查是否有结果文件
+    let result_path = task.result.ok_or_else(|| {
+        format!("任务 {} 没有转写结果文件", task_id)
+    })?;
+    
+    // 读取转写结果文件
+    let content = tokio::task::spawn_blocking({
+        let result_path = result_path.clone();
+        move || -> Result<String, String> {
+            let result_file = std::path::PathBuf::from(&result_path);
+            if !result_file.exists() {
+                return Err(format!("转写结果文件不存在: {}", result_path));
+            }
+            std::fs::read_to_string(&result_file)
+                .map_err(|e| format!("无法读取转写结果文件: {}", e))
+        }
+    })
+    .await
+    .map_err(|e| format!("文件操作失败: {}", e))??;
+    
+    // 解析 JSON
+    let json_value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("无法解析转写结果 JSON: {}", e))?;
+    
+    let segments = json_value
+        .get("transcription")
+        .and_then(|t| t.as_array())
+        .ok_or_else(|| "无法找到 transcription 数组".to_string())?;
+    
+    // 查找时间范围内的片段
+    let mut matched_segments = Vec::new();
+    let end_time = end_time.unwrap_or(f64::MAX); // 如果没有提供 end_time，使用最大值
+    
+    for seg in segments.iter() {
+        let seg_start = seg
+            .get("offsets")
+            .and_then(|o| o.get("from"))
+            .and_then(|t| t.as_f64())
+            .unwrap_or(0.0);
+        let seg_end = seg
+            .get("offsets")
+            .and_then(|o| o.get("to"))
+            .and_then(|t| t.as_f64())
+            .unwrap_or(0.0);
+        
+        // 检查片段是否与时间范围有交集
+        // 片段与范围有交集的条件：seg_start < end_time && seg_end > start_time
+        if seg_start < end_time && seg_end > start_time {
+            matched_segments.push(seg.clone());
+        }
+    }
+    
+    if matched_segments.is_empty() {
+        let end_time_str = if end_time == f64::MAX {
+            "结束".to_string()
+        } else {
+            format!("{:.2}", end_time)
+        };
+        return Ok(json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": format!(
+                        "在时间范围 {:.2} 秒到 {} 秒之间没有找到转写内容",
+                        start_time,
+                        end_time_str
+                    )
+                }
+            ]
+        }));
+    }
+    
+    // 构建返回内容（不包含时间范围和片段数量，这些信息在 props 中单独提供）
+    let mut result_text = String::new();
+    
+    for seg in &matched_segments {
+        let time_from = seg
+            .get("timestamps")
+            .and_then(|t| t.get("from"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let time_to = seg
+            .get("timestamps")
+            .and_then(|t| t.get("to"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let text = seg
+            .get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let offset_from = seg
+            .get("offsets")
+            .and_then(|o| o.get("from"))
+            .and_then(|t| t.as_f64())
+            .unwrap_or(0.0);
+        let offset_to = seg
+            .get("offsets")
+            .and_then(|o| o.get("to"))
+            .and_then(|t| t.as_f64())
+            .unwrap_or(0.0);
+        
+        result_text.push_str(&format!(
+            "[{} - {}] ({:.2}s - {:.2}s)\n{}\n\n",
+            time_from, time_to, offset_from, offset_to, text
+        ));
+    }
+    
+    // 返回 component 格式
+    Ok(json!({
+        "content": [
+            {
+                "type": "component",
+                "component": "task-content-by-time-range",
+                "props": {
+                    "task_id": task_id,
+                    "start_time": start_time,
+                    "end_time": if end_time == f64::MAX { json!(null) } else { json!(end_time) },
+                    "segment_count": matched_segments.len(),
+                    "content": result_text,
+                    "segments": matched_segments
+                }
             }
         ]
     }))
