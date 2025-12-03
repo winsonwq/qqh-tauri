@@ -4,7 +4,7 @@ mod ai;
 mod default_mcp;
 
 // 压缩优化相关常量
-const COMPRESSION_SHORT_CONTENT_THRESHOLD: usize = 10000; // 短内容阈值（小于此值不压缩）
+const COMPRESSION_SHORT_CONTENT_THRESHOLD: usize = 30000; // 短内容阈值（小于此值不压缩）
 const COMPRESSION_LONG_CONTENT_THRESHOLD: usize = 150000; // 超长内容阈值（超过此值需要截断）
 const COMPRESSION_TRUNCATE_HEAD_LENGTH: usize = 50000; // 超长内容截断时前部分长度
 const COMPRESSION_TRUNCATE_TAIL_LENGTH: usize = 50000; // 超长内容截断时后部分长度
