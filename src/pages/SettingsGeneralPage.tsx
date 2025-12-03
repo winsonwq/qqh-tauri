@@ -278,7 +278,7 @@ const AIConfigBlock = () => {
 
         {/* 压缩模型选择部分 */}
         <div className="mt-6 pt-6 border-t border-base-300">
-          <h3 className="text-md font-semibold mb-3">压缩模型选择</h3>
+          <h3 className="text-md font-semibold mb-3">基础模型选择，用于压缩转写和提取话题</h3>
           {configs.length === 0 ? (
             <p className="text-sm text-base-content/50">暂无 AI 配置，请先添加配置</p>
           ) : (
