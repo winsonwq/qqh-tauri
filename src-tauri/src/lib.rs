@@ -1794,6 +1794,17 @@ async fn compress_transcription_after_completion(
         .await
         .map_err(|e| format!("数据库操作失败: {}", e))??;
         
+        // 仅在开发环境下保存压缩内容到临时文件
+        #[cfg(debug_assertions)]
+        {
+            let temp_file_path = std::env::temp_dir().join(format!("compressed-{}.txt", task_id));
+            if let Err(e) = tokio::fs::write(&temp_file_path, &compressed).await {
+                emit_error(&format!("保存临时文件失败: {}\n", e));
+            } else {
+                emit_log(&format!("压缩内容已保存到临时文件: {}\n", temp_file_path.display()));
+            }
+        }
+        
         return Ok(());
     }
     
@@ -2005,6 +2016,17 @@ async fn compress_transcription_after_completion(
     })
     .await
     .map_err(|e| format!("数据库操作失败: {}", e))??;
+    
+    // 仅在开发环境下保存压缩内容到临时文件
+    #[cfg(debug_assertions)]
+    {
+        let temp_file_path = std::env::temp_dir().join(format!("compressed-{}.txt", task_id));
+        if let Err(e) = tokio::fs::write(&temp_file_path, &final_compressed).await {
+            emit_error(&format!("保存临时文件失败: {}\n", e));
+        } else {
+            emit_log(&format!("压缩内容已保存到临时文件: {}\n", temp_file_path.display()));
+        }
+    }
     
     Ok(())
 }
