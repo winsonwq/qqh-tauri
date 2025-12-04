@@ -48,8 +48,8 @@ export interface AIMessage {
   name?: string // tool name
   reasoning?: string // thinking/reasoning 内容
   pendingToolCalls?: ToolCall[] // 待确认的工具调用
-  agentType?: string // agent 类型（兼容 agent-framework）
-  action?: string // agent 行为类型（兼容 agent-framework）
+  agentType?: string | undefined // agent 类型（兼容 agent-framework，使用 string 以兼容不同来源）
+  action?: string | undefined // agent 行为类型（兼容 agent-framework，使用 string 以兼容不同来源）
 }
 
 /**

@@ -50,7 +50,7 @@ const IframePlayer = memo(
           // iframe 嵌入的视频无法直接获取时间，返回 0
           return 0
         },
-        onTimeUpdate: (callback: (time: number) => void) => {
+        onTimeUpdate: () => {
           // iframe 嵌入的视频无法监听时间更新，返回空清理函数
           return () => {}
         },

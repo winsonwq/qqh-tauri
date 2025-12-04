@@ -301,9 +301,9 @@ export class ReActWorkflowEngine {
     configId: string,
     chatId: string,
     messages: AIMessage[],
+    updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
     currentResourceId?: string | null,
     currentTaskId?: string | null,
-    updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
   ): Promise<AgentMeta | null> {
     const toolInfoList = this.toolProvider.getToolInfoList()
     const systemMessage = this.promptManager.getThoughtPrompt(
@@ -406,9 +406,9 @@ export class ReActWorkflowEngine {
     configId: string,
     chatId: string,
     messages: AIMessage[],
+    updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
     currentResourceId?: string | null,
     currentTaskId?: string | null,
-    updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
   ): Promise<AICallResult> {
     const toolInfoList = this.toolProvider.getToolInfoList()
     console.log(
@@ -455,9 +455,9 @@ export class ReActWorkflowEngine {
     configId: string,
     chatId: string,
     messages: AIMessage[],
+    updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
     currentResourceId?: string | null,
     currentTaskId?: string | null,
-    updateMessages: (updater: (prev: AIMessage[]) => AIMessage[]) => void,
   ): Promise<string> {
     const systemMessage = this.promptManager.getObservationPrompt(
       currentResourceId,
@@ -526,9 +526,9 @@ export class ReActWorkflowEngine {
           configId,
           chatId,
           currentMessages,
+          updateMessages,
           currentResourceId,
           currentTaskId,
-          updateMessages,
         )
 
         if (!thoughtMeta) {
@@ -550,9 +550,9 @@ export class ReActWorkflowEngine {
           configId,
           chatId,
           currentMessages,
+          updateMessages,
           currentResourceId,
           currentTaskId,
-          updateMessages,
         )
 
         log(
@@ -622,9 +622,9 @@ export class ReActWorkflowEngine {
               configId,
               chatId,
               currentMessages,
+              updateMessages,
               currentResourceId,
               currentTaskId,
-              updateMessages,
             )
             log('[ReAct] 观察阶段完成，准备进入下一轮')
           } catch (obsErr) {

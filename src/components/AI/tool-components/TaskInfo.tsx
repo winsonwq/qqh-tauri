@@ -24,12 +24,8 @@ const TaskInfo: React.FC<TaskInfoProps> = ({ props }) => {
     resource_name,
     resource_type,
     status,
-    created_at,
     completed_at,
-    result,
     error,
-    transcription_content,
-    has_transcription_content,
   } = props
 
   return (

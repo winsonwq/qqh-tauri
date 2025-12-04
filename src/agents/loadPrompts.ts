@@ -2,7 +2,7 @@
  * 加载 Agent 提示词
  */
 
-import { AgentPrompt, AgentType } from './agentTypes'
+import { AgentType } from './agentTypes'
 
 // 动态导入提示词文件
 const promptCache: Map<AgentType, string> = new Map()

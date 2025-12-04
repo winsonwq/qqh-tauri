@@ -118,10 +118,19 @@ const AIPanel = () => {
   })
 
   // ReAct Agent 处理 (Ask 模式)
+  // 创建一个包装函数来转换类型，因为 react-framework 使用不同的 AIMessage 类型
+  const reactUpdateMessages = useCallback(
+    (updater: (prev: any[]) => any[]) => {
+      updateMessages((prev) => {
+        const updated = updater(prev as any)
+        return updated as AIMessage[]
+      })
+    },
+    [updateMessages],
+  )
+
   const {
     isStreaming: isReActStreaming,
-    currentPhase: reactPhase,
-    currentIteration: reactIteration,
     startReActAgent,
     stopReActAgent,
     continueAfterToolConfirm: continueReActAfterToolConfirm,
@@ -130,8 +139,8 @@ const AIPanel = () => {
     currentChatId: currentChat?.id,
     currentResourceId,
     currentTaskId,
-    messagesRef,
-    updateMessages,
+    messagesRef: messagesRef as any,
+    updateMessages: reactUpdateMessages as any,
     mcpServers,
   })
 

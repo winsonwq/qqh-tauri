@@ -13,7 +13,7 @@ import { MCPServerInfo } from '../../models'
 
 interface UseReActAgentOptions {
   selectedConfigId: string
-  currentChatId: string | undefined
+  currentChatId?: string | undefined
   currentResourceId: string | null
   currentTaskId: string | null
   messagesRef: React.MutableRefObject<AIMessage[]>
@@ -23,7 +23,6 @@ interface UseReActAgentOptions {
 
 export function useReActAgent({
   selectedConfigId,
-  currentChatId,
   currentResourceId,
   currentTaskId,
   messagesRef,

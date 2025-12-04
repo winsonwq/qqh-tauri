@@ -59,9 +59,9 @@ export class TauriReActBackend implements IReActBackend {
       onError: (error: Error) => void
     },
   ): Promise<() => void> {
-    const { listen, UnlistenFn } = await import('@tauri-apps/api/event')
+    const { listen } = await import('@tauri-apps/api/event')
     const eventName = `ai-chat-stream-${eventId}`
-    let unlisten: UnlistenFn | null = null
+    let unlisten: (() => void) | null = null
 
     const promise = listen<{
       type: string

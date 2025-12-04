@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, ReactNode, forwardRef } from 'react'
+import { useRef, useEffect, useState, useCallback, ReactNode, forwardRef } from 'react'
 import { HiArrowDown } from 'react-icons/hi2'
 
 interface AutoScrollContainerProps {
@@ -16,8 +16,7 @@ const AutoScrollContainer = forwardRef<HTMLDivElement, AutoScrollContainerProps>
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const lastScrollTopRef = useRef<number>(0)
-  const isUserScrollingRef = useRef<boolean>(false)
-  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isProgrammaticScrollRef = useRef<boolean>(false)
   const userInteractionRef = useRef<boolean>(false) // 标记是否有用户交互（鼠标/触摸）
 
@@ -123,7 +122,7 @@ const AutoScrollContainer = forwardRef<HTMLDivElement, AutoScrollContainerProps>
   }, [shouldAutoScroll, isAutoScrollEnabled])
 
   // 使用 MutationObserver 监听内容变化，在流式输出时及时滚动
-  const mutationObserverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const mutationObserverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!shouldAutoScroll || !isAutoScrollEnabled) return
 

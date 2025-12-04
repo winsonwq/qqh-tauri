@@ -3,7 +3,6 @@ import {
   FaArrowUp,
   FaStop,
 } from 'react-icons/fa'
-import { HiArrowPath } from 'react-icons/hi2'
 import { TbInfinity, TbMessageCircle } from 'react-icons/tb'
 import RichTextEditor, { RichTextEditorRef } from './RichTextEditor'
 import { MentionOption } from './MentionPlugin'

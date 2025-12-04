@@ -51,104 +51,6 @@ export class AgentWorkflowEngine {
       events.onMessageUpdate(currentMessages);
     };
 
-    // Helper: Call AI and Wait
-    const callAIAndWait = async (
-      messages: AIMessage[],
-      agentType: AgentType,
-      toolsToSend: any[] | null,
-      eventId: string,
-      assistantMessageId: string
-    ) => {
-      const prompt = this.promptManager.getPrompt(agentType);
-      
-      // Add placeholder assistant message
-      updateMessages(prev => [
-        ...prev,
-        {
-          id: assistantMessageId,
-          role: 'assistant',
-          content: '',
-          timestamp: new Date(),
-          agentType
-        }
-      ]);
-
-      let finalContent = '';
-      let finalToolCalls: ToolCall[] | undefined;
-      let finalReasoning = '';
-
-      const stopListening = await this.backend.listenToStream(eventId, {
-        onContent: (content) => {
-          finalContent += content;
-          updateMessages(prev => prev.map(msg => 
-            msg.id === assistantMessageId ? { ...msg, content: msg.content + content } : msg
-          ));
-        },
-        onToolCalls: (toolCalls) => {
-          finalToolCalls = toolCalls;
-          updateMessages(prev => prev.map(msg => 
-            msg.id === assistantMessageId 
-              ? { 
-                  ...msg, 
-                  tool_calls: toolCalls,
-                  action: msg.agentType === 'executor' ? 'calling_tool' : msg.action
-                } 
-              : msg
-          ));
-        },
-        onReasoning: (content) => {
-          finalReasoning += content;
-          updateMessages(prev => prev.map(msg => 
-            msg.id === assistantMessageId 
-              ? { 
-                  ...msg, 
-                  reasoning: (msg.reasoning || '') + content,
-                  action: msg.agentType === 'executor' ? 'thinking' : msg.action
-                } 
-              : msg
-          ));
-        },
-        onDone: () => {}, // Handled by promise resolution
-        onError: (err) => {
-            // Optional: handle stream errors specifically
-        }
-      });
-
-      try {
-        const combinedSystemMessage = `${systemMessage}\n\n${prompt}`;
-        await this.backend.chatCompletion({
-          configId,
-          messages,
-          tools: toolsToSend || undefined,
-          systemMessage: combinedSystemMessage,
-          eventId
-        });
-
-        // Wait for stream completion (implicit in listenToStream implementation or we need a promise wrapper)
-        // In the original code, listenToStream returns a promise that resolves when 'done' event is received.
-        // Here, I assumed listenToStream is setting up listeners.
-        // To match the original behavior, I need to wait for the 'done' signal.
-        // Since `listenToStream` in my interface returns a cleanup function, I should wrap the waiting logic.
-        // BUT, the backend implementation of listenToStream should probably return a Promise that resolves when stream is done if we want to await it.
-        // However, the original code uses a Promise wrapper around the listen call.
-        // I'll refactor this helper to assume listenToStream sets up the listener and returns a promise that resolves when done.
-        
-        // Wait for completion is tricky here if `listenToStream` only registers callbacks. 
-        // Let's assume `listenToStream` returns a cleanup function, and we need to pass a `resolve` function to `onDone`.
-        
-        // REVISION: I will rely on the `listenToStream` implementation to handle the promise logic or 
-        // I will wrap it here. Let's wrap it here for clarity.
-      } catch (error) {
-        stopListening();
-        throw error;
-      }
-
-      // We need a way to know when streaming is done. 
-      // The `listenToStream` interface I defined earlier might need adjustment or usage change.
-      // Let's assume `listenToStream` takes callbacks and returns a cleanup fn. 
-      // But we need to `await` the completion.
-      // I'll change `callAIAndWait` to create a Promise.
-    };
 
     // Re-implementing callAIAndWait properly
     const callAI = async (
@@ -241,9 +143,9 @@ export class AgentWorkflowEngine {
                 reasoning: hasValidReasoning ? finalReasoning : undefined
               });
             },
-            onError: (err) => {
+            onError: (error) => {
               if (cleanup) cleanup();
-              reject(err);
+              reject(error);
             }
           });
 

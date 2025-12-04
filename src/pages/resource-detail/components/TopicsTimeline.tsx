@@ -20,7 +20,7 @@ const TopicsTimeline = memo(({
   const [hoveredTopicIndex, setHoveredTopicIndex] = useState<number | null>(null)
 
   // 处理点击时间范围，跳转到开始时间
-  const handleTimeRangeClick = useCallback((topic: Topic, timeRange: TopicTimeRange) => {
+  const handleTimeRangeClick = useCallback((_topic: Topic, timeRange: TopicTimeRange) => {
     const seekTime = timeRange.start
     if (playerRef?.current) {
       playerRef.current.seek(seekTime)
