@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "../redux/hooks";
 import { setCurrentFeature, setCurrentPage } from "../redux/slices/featureKeysSlice";
-import { toggleSidePanel } from "../redux/slices/sidePanelSlice";
 import { loadMCPConfigs } from "../redux/slices/mcpSlice";
 import { loadAIConfigs } from "../redux/slices/aiConfigSlice";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -9,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import AppSideBar from "./AppSideBar";
 import AppContent from "./AppContent";
 import SidePanel from "./SidePanel";
-import { FaBars, FaRobot } from "react-icons/fa";
+import { FaBars } from "react-icons/fa";
 import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
 import { useToast } from "./Toast/useToast";
 import { TranscriptionResource } from "../models";
@@ -31,7 +30,7 @@ const normalizePath = (path: string) => path.replace(/\\/g, '/');
 const Layout = () => {
   const dispatch = useAppDispatch();
   const { currentFeature } = useAppSelector((state) => state.featureKeys);
-  const { isOpen: sidePanelOpen } = useAppSelector((state) => state.sidePanel);
+  const { currentComponent } = useAppSelector((state) => state.sidePanel);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const toast = useToast();
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -214,10 +213,6 @@ const Layout = () => {
     setSidebarOpen(!sidebarOpen);
   };
 
-  const handleToggleSidePanel = () => {
-    dispatch(toggleSidePanel());
-  };
-
   return (
     <>
       {/* 全屏拖拽提示特效 */}
@@ -267,42 +262,20 @@ const Layout = () => {
 
         {/* 主内容区域和右侧面板 */}
         <div className="flex-1 overflow-hidden">
-          {sidePanelOpen ? (
-            <PanelGroup direction="horizontal" className="h-full">
-              {/* 主内容区域 */}
-              <Panel defaultSize={70} minSize={30} className="overflow-hidden relative">
-                <AppContent />
-                {/* 主内容区域右下角的按钮 */}
-                <button
-                  onClick={handleToggleSidePanel}
-                  className="absolute bottom-4 right-4 z-50 btn btn-circle btn-primary shadow-lg transition-all"
-                  title={sidePanelOpen ? '关闭侧边面板' : '打开侧边面板'}
-                >
-                  <FaRobot className="w-5 h-5" />
-                </button>
-              </Panel>
-              
-              {/* 可拖动的分隔线 */}
-              <PanelResizeHandle className="w-1 bg-base-300 hover:bg-primary transition-colors cursor-col-resize" />
-              
-              {/* 右侧面板 */}
-              <Panel defaultSize={30} minSize={20} maxSize={50} className="overflow-hidden">
-                <SidePanel />
-              </Panel>
-            </PanelGroup>
-          ) : (
-            <div className="h-full overflow-hidden relative">
+          <PanelGroup direction="horizontal" className="h-full">
+            {/* 主内容区域 */}
+            <Panel defaultSize={70} minSize={30} className="overflow-hidden relative">
               <AppContent />
-              {/* 主内容区域右下角的按钮 */}
-              <button
-                onClick={handleToggleSidePanel}
-                className="absolute bottom-4 right-4 z-50 btn btn-circle btn-primary shadow-lg transition-all"
-                title={sidePanelOpen ? '关闭侧边面板' : '打开侧边面板'}
-              >
-                <FaRobot className="w-5 h-5" />
-              </button>
-            </div>
-          )}
+            </Panel>
+            
+            {/* 可拖动的分隔线 */}
+            <PanelResizeHandle className="w-1 bg-base-300 hover:bg-primary transition-colors cursor-col-resize" />
+            
+            {/* 右侧面板 */}
+            <Panel defaultSize={30} minSize={20} maxSize={50} className="overflow-hidden">
+              <SidePanel />
+            </Panel>
+          </PanelGroup>
         </div>
       </div>
       <AppSideBar sidebarOpen={sidebarOpen} onToggleSidebar={handleToggleSidebar} />

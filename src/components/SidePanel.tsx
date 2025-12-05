@@ -8,12 +8,9 @@ const componentMap: Record<string, React.ComponentType> = {
 };
 
 const SidePanel = () => {
-  const { isOpen, currentComponent } = useAppSelector((state) => state.sidePanel);
+  const { currentComponent } = useAppSelector((state) => state.sidePanel);
 
-  if (!isOpen) {
-    return null;
-  }
-
+  // AI 面板始终显示，不存在关闭/展开功能
   const Component = currentComponent ? componentMap[currentComponent] : null;
 
   return (
