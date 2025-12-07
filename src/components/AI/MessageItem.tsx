@@ -39,7 +39,7 @@ const getMessageContainerClasses = (
 }
 
 // 获取消息内容区域样式
-const getMessageContentClasses = (role: 'user' | 'assistant' | 'tool') => {
+const getMessageContentClasses = (role: 'user' | 'assistant' | 'tool', isSticky: boolean = false) => {
   const baseClasses = 'px-4 py-3 space-y-2'
   return role === 'user'
     ? `${baseClasses} bg-base-200 border rounded-lg border-base-300`
@@ -334,7 +334,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       className={getMessageContainerClasses(message.role, isSticky)}
       style={isSticky ? { top: 0 } : undefined}
     >
-      <div className={getMessageContentClasses(message.role)}>
+      <div className={getMessageContentClasses(message.role, isSticky)}>
         {/* 显示 reasoning/thinking 内容（只在有实际内容时显示，且没有工具调用时） */}
         {message.reasoning && 
          message.reasoning.trim().length > 0 && 

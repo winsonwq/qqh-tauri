@@ -29,7 +29,7 @@ export function useStickyMessages(
 
     // 检测哪些消息在视口顶部
     const checkStickyMessages = () => {
-      const stickyIds: string[] = []
+      const candidateMessages: Array<{ id: string; index: number; bottom: number }> = []
       const scrollContainer = scrollContainerRef.current
       if (!scrollContainer) return
 
@@ -37,28 +37,57 @@ export function useStickyMessages(
       const containerRect = scrollContainer.getBoundingClientRect()
       const containerTop = containerRect.top
 
+      // 找到所有在视口上方或与视口顶部相交的 user message
       messageRefs.current.forEach((element, messageId) => {
         const message = messages.find((m) => m.id === messageId)
         if (message && message.role === 'user') {
           const rect = element.getBoundingClientRect()
-          // 如果消息的顶部在滚动容器顶部或上方，且底部在滚动容器内，则认为它应该 sticky
-          if (rect.top <= containerTop && rect.bottom > containerTop) {
-            stickyIds.push(messageId)
+          const messageIndex = messages.findIndex((m) => m.id === messageId)
+          
+          // 如果消息的顶部在滚动容器顶部或上方，则认为它可能是 sticky 候选
+          // 这包括：
+          // 1. 消息与视口顶部相交（rect.top <= containerTop && rect.bottom > containerTop）
+          // 2. 消息完全在视口上方（rect.top <= containerTop && rect.bottom <= containerTop）
+          // 但我们优先选择与视口顶部相交的消息
+          if (rect.top <= containerTop) {
+            candidateMessages.push({
+              id: messageId,
+              index: messageIndex,
+              bottom: rect.bottom,
+            })
           }
         }
       })
 
-      // 只保留最后一个 sticky 的消息（按消息顺序）
-      if (stickyIds.length > 0) {
-        const sortedStickyIds = stickyIds.sort((a, b) => {
-          const indexA = messages.findIndex((m) => m.id === a)
-          const indexB = messages.findIndex((m) => m.id === b)
-          return indexA - indexB
-        })
-        const newStickyId = sortedStickyIds[sortedStickyIds.length - 1]
-        if (newStickyId !== stickyMessageId) {
-          setStickyMessageId(newStickyId)
-          console.log('[AIPanel] Sticky Message ID updated to:', newStickyId)
+      if (candidateMessages.length > 0) {
+        // 优先选择与视口顶部相交的消息（bottom > containerTop）
+        const intersectingMessages = candidateMessages.filter(
+          (m) => m.bottom > containerTop
+        )
+
+        let targetMessage: { id: string; index: number } | null = null
+
+        if (intersectingMessages.length > 0) {
+          // 如果有与视口顶部相交的消息，选择其中最后一个（按消息顺序）
+          const sorted = intersectingMessages.sort((a, b) => a.index - b.index)
+          targetMessage = sorted[sorted.length - 1]
+        } else {
+          // 如果没有与视口顶部相交的消息，选择最接近视口顶部的消息（bottom 最大的）
+          // 这通常是在视口上方但最接近视口的消息
+          const sorted = candidateMessages.sort((a, b) => {
+            // 首先按 bottom 降序排序（最接近视口的在前）
+            if (b.bottom !== a.bottom) {
+              return b.bottom - a.bottom
+            }
+            // 如果 bottom 相同，按消息顺序排序（选择最后一个）
+            return b.index - a.index
+          })
+          targetMessage = sorted[0]
+        }
+
+        if (targetMessage && targetMessage.id !== stickyMessageId) {
+          setStickyMessageId(targetMessage.id)
+          console.log('[AIPanel] Sticky Message ID updated to:', targetMessage.id)
         }
       } else if (stickyMessageId !== null) {
         setStickyMessageId(null)
